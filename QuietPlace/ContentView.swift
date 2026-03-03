@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var hasRequestedPermissions = false
     @State private var showPermissionAlert = false
     @State private var permissionAlertMessage = ""
+    @State private var showSplash = true // 스플래시 화면 표시 여부
     @Environment(\.scenePhase) private var scenePhase
     
     enum Tab {
@@ -37,6 +38,13 @@ struct ContentView: View {
                 // 앱이 시작될 때 권한 체크 (온보딩 완료 후)
                 if !isFirstLaunch {
                     checkPermissions()
+                }
+                
+                // 스플래시 화면 자동 숨김 (1.5초 후)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation(.easeOut(duration: 0.4)) {
+                        showSplash = false
+                    }
                 }
             }
             .onChange(of: scenePhase) { oldPhase, newPhase in
@@ -79,6 +87,13 @@ struct ContentView: View {
                 OnboardingView(isFirstLaunch: $isFirstLaunch)
                     .transition(.opacity)
                     .zIndex(999)
+            }
+            
+            // 스플래시 오버레이 (앱 시작 시)
+            if showSplash {
+                SplashView()
+                    .transition(.opacity)
+                    .zIndex(1000) // 온보딩보다 위에 표시
             }
         }
     }

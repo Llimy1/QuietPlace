@@ -170,7 +170,7 @@ struct GalleryView: View {
                 // Disk cache remains for fast loading next time
                 Task {
                     ThumbnailCache.shared.memoryCache.removeAllObjects()
-                    print("🧹 Gallery memory cache cleared")
+                    debugPrint("🧹 Gallery memory cache cleared")
                 }
             }
             .overlay {
@@ -219,7 +219,7 @@ struct GalleryView: View {
         // 처음 20개 사진만 사전 로딩 (백그라운드에서)
         let photosToPreload = Array(photoDataManager.photos.prefix(20))
         
-        print("🔄 Prefetching \(photosToPreload.count) thumbnails...")
+        debugPrint("🔄 Prefetching \(photosToPreload.count) thumbnails...")
         
         await withTaskGroup(of: Void.self) { group in
             for photo in photosToPreload {
@@ -229,7 +229,7 @@ struct GalleryView: View {
             }
         }
         
-        print("✅ Prefetching complete!")
+        debugPrint("✅ Prefetching complete!")
     }
     
     // MARK: - Actions

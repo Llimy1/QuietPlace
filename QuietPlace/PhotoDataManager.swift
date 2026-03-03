@@ -81,7 +81,7 @@ class PhotoDataManager: ObservableObject {
             }
             
             guard let data = imageData else {
-                print("❌ Failed to convert image to data")
+                debugPrint("❌ Failed to convert image to data")
                 await MainActor.run {
                     self.errorMessage = "이미지 데이터 변환에 실패했습니다"
                     self.showError = true
@@ -94,13 +94,13 @@ class PhotoDataManager: ObservableObject {
             // 디스크에 저장
             do {
                 try data.write(to: fileURL)
-                print("✅ Photo saved: \(fileName)")
+                debugPrint("✅ Photo saved: \(fileName)")
                 
                 // 4️⃣ 썸네일 미리 생성 (백그라운드에서)
                 await ThumbnailCache.shared.getThumbnailAsync(for: photoItem)
                 
             } catch {
-                print("❌ Failed to save photo: \(error)")
+                debugPrint("❌ Failed to save photo: \(error)")
                 await MainActor.run {
                     self.errorMessage = "사진 저장에 실패했습니다: \(error.localizedDescription)"
                     self.showError = true
@@ -136,7 +136,7 @@ class PhotoDataManager: ObservableObject {
         let fileURL = photosDirectory.appendingPathComponent(fileName)
         
         guard let data = imageData else {
-            print("❌ Failed to convert image to data")
+            debugPrint("❌ Failed to convert image to data")
             errorMessage = "이미지 데이터 변환에 실패했습니다"
             showError = true
             return nil
@@ -153,12 +153,12 @@ class PhotoDataManager: ObservableObject {
             )
             
             photos.insert(photoItem, at: 0) // 최신 사진을 앞에
-            print("✅ Photo saved: \(fileName)")
+            debugPrint("✅ Photo saved: \(fileName)")
             
             return photoItem
             
         } catch {
-            print("❌ Failed to save photo: \(error)")
+            debugPrint("❌ Failed to save photo: \(error)")
             errorMessage = "사진 저장에 실패했습니다: \(error.localizedDescription)"
             showError = true
             return nil
@@ -169,7 +169,7 @@ class PhotoDataManager: ObservableObject {
     
     /// ⚡️ 비동기 사진 로드 (UI 블록 없음)
     func loadPhotosAsync() async {
-        print("⚡️ [PhotoDataManager] Starting async photo load...")
+        debugPrint("⚡️ [PhotoDataManager] Starting async photo load...")
         
         let startTime = Date()
         
@@ -203,7 +203,7 @@ class PhotoDataManager: ObservableObject {
                 return photos.sorted { $0.createdDate > $1.createdDate }
                 
             } catch {
-                print("❌ Failed to load photos: \(error)")
+                debugPrint("❌ Failed to load photos: \(error)")
                 return []
             }
         }.value
@@ -212,7 +212,7 @@ class PhotoDataManager: ObservableObject {
         await MainActor.run {
             self.photos = loadedPhotos
             let elapsed = Date().timeIntervalSince(startTime)
-            print("✅ Loaded \(loadedPhotos.count) photos in \(String(format: "%.2f", elapsed))s")
+            debugPrint("✅ Loaded \(loadedPhotos.count) photos in \(String(format: "%.2f", elapsed))s")
         }
     }
     
@@ -246,10 +246,10 @@ class PhotoDataManager: ObservableObject {
             // 날짜순 정렬 (최신순)
             photos.sort { $0.createdDate > $1.createdDate }
             
-            print("✅ Loaded \(photos.count) photos")
+            debugPrint("✅ Loaded \(photos.count) photos")
             
         } catch {
-            print("❌ Failed to load photos: \(error)")
+            debugPrint("❌ Failed to load photos: \(error)")
         }
     }
     
@@ -264,9 +264,9 @@ class PhotoDataManager: ObservableObject {
                 // 캐시에서도 제거
                 ThumbnailCache.shared.removeThumbnail(for: item.id)
                 
-                print("✅ Deleted photo: \(item.fileName)")
+                debugPrint("✅ Deleted photo: \(item.fileName)")
             } catch {
-                print("❌ Failed to delete photo: \(error)")
+                debugPrint("❌ Failed to delete photo: \(error)")
             }
         }
     }
@@ -277,7 +277,7 @@ class PhotoDataManager: ObservableObject {
         // Photos 권한 확인
         let status = await requestPhotosPermission()
         guard status == .authorized || status == .limited else {
-            print("❌ Photos permission denied")
+            debugPrint("❌ Photos permission denied")
             errorMessage = "사진 라이브러리 접근 권한이 필요합니다. 설정에서 권한을 허용해주세요."
             showError = true
             return (false, 0, photoItems.count)
@@ -289,7 +289,7 @@ class PhotoDataManager: ObservableObject {
         for item in photoItems {
             // 파일에서 이미지 로드
             guard let image = UIImage(contentsOfFile: item.fileURL.path) else {
-                print("❌ Failed to load image from: \(item.fileURL.path)")
+                debugPrint("❌ Failed to load image from: \(item.fileURL.path)")
                 continue
             }
             
@@ -298,16 +298,16 @@ class PhotoDataManager: ObservableObject {
                     PHAssetChangeRequest.creationRequestForAsset(from: image)
                 }
                 successCount += 1
-                print("✅ Downloaded to Photos: \(item.fileName)")
+                debugPrint("✅ Downloaded to Photos: \(item.fileName)")
             } catch {
-                print("❌ Failed to download \(item.fileName): \(error)")
+                debugPrint("❌ Failed to download \(item.fileName): \(error)")
                 lastError = error
             }
         }
         
         // 결과 처리
         if successCount > 0 {
-            print("✅ Downloaded \(successCount)/\(photoItems.count) photos to library")
+            debugPrint("✅ Downloaded \(successCount)/\(photoItems.count) photos to library")
             return (true, successCount, photoItems.count)
         } else {
             // 모든 사진 다운로드 실패
@@ -395,7 +395,7 @@ extension UIImage {
         
         // CGImage로 변환 (알파 채널 제거)
         guard let cgImage = self.cgImage else {
-            print("❌ Failed to get CGImage from UIImage")
+            debugPrint("❌ Failed to get CGImage from UIImage")
             return self.jpegData(compressionQuality: compressionQuality)
         }
         
@@ -412,7 +412,7 @@ extension UIImage {
             space: colorSpace,
             bitmapInfo: bitmapInfo.rawValue
         ) else {
-            print("❌ Failed to create CGContext")
+            debugPrint("❌ Failed to create CGContext")
             return self.jpegData(compressionQuality: compressionQuality)
         }
         
@@ -420,7 +420,7 @@ extension UIImage {
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
         
         guard let imageWithoutAlpha = context.makeImage() else {
-            print("❌ Failed to create image without alpha")
+            debugPrint("❌ Failed to create image without alpha")
             return self.jpegData(compressionQuality: compressionQuality)
         }
         
@@ -434,7 +434,7 @@ extension UIImage {
             1,
             nil
         ) else {
-            print("❌ Failed to create HEIC destination")
+            debugPrint("❌ Failed to create HEIC destination")
             return self.jpegData(compressionQuality: compressionQuality)
         }
         
@@ -447,7 +447,7 @@ extension UIImage {
         CGImageDestinationAddImage(destination, imageWithoutAlpha, options as CFDictionary)
         
         guard CGImageDestinationFinalize(destination) else {
-            print("❌ Failed to finalize HEIC image")
+            debugPrint("❌ Failed to finalize HEIC image")
             return self.jpegData(compressionQuality: compressionQuality)
         }
         

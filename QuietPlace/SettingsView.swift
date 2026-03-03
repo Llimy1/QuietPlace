@@ -17,6 +17,7 @@ struct SettingsView: View {
     @State private var showClearCacheAlert = false
     @State private var showOnboardingAgain = false  // 온보딩 다시 보기
     @State private var showPrivacyPolicy = false  // 개인정보 보호정책
+    @State private var showTermsOfService = false  // 이용약관
     @State private var showEmailCopiedAlert = false  // 이메일 복사 알림
     
     // 지원 이메일
@@ -222,6 +223,16 @@ struct SettingsView: View {
                                 .padding(.leading, 16)
                             
                             SettingsRow(
+                                title: "이용약관",
+                                showArrow: true
+                            ) {
+                                showTermsOfService = true
+                            }
+                            
+                            Divider()
+                                .padding(.leading, 16)
+                            
+                            SettingsRow(
                                 title: "설정 초기화",
                                 showArrow: false
                             ) {
@@ -286,6 +297,11 @@ struct SettingsView: View {
         .sheet(isPresented: $showPrivacyPolicy) {
             NavigationStack {
                 PrivacyPolicyView()
+            }
+        }
+        .sheet(isPresented: $showTermsOfService) {
+            NavigationStack {
+                TermsOfServiceView()
             }
         }
     }

@@ -46,13 +46,13 @@ struct PhotoPicker: UIViewControllerRepresentable {
                 provider.loadObject(ofClass: UIImage.self) { [weak self] image, error in
                     DispatchQueue.main.async {
                         if let error = error {
-                            print("❌ Failed to load image: \(error)")
+                            debugPrint("❌ Failed to load image: \(error)")
                             return
                         }
                         
                         if let image = image as? UIImage {
                             self?.parent.selectedImage = image
-                            print("✅ Background image selected")
+                            debugPrint("✅ Background image selected")
                         }
                     }
                 }

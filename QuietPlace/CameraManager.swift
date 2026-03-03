@@ -108,13 +108,13 @@ class CameraManager: NSObject, ObservableObject {
                 // ⚡️ 4K 해상도 설정 (지원하는 기기에서)
                 if self.session.canSetSessionPreset(.hd4K3840x2160) {
                     self.session.sessionPreset = .hd4K3840x2160
-                    print("📸 Using 4K resolution (3840x2160)")
+                    debugPrint("📸 Using 4K resolution (3840x2160)")
                 } else if self.session.canSetSessionPreset(.hd1920x1080) {
                     self.session.sessionPreset = .hd1920x1080
-                    print("📸 Using Full HD resolution (1920x1080)")
+                    debugPrint("📸 Using Full HD resolution (1920x1080)")
                 } else {
                     self.session.sessionPreset = .photo
-                    print("📸 Using photo preset")
+                    debugPrint("📸 Using photo preset")
                 }
                 
                 do {
@@ -183,7 +183,7 @@ class CameraManager: NSObject, ObservableObject {
     
     // ⚡️ CIContext 워밍업 - GPU 파이프라인 미리 초기화
     private nonisolated func warmupCIContext() {
-        print("🔥 Starting CIContext warmup...")
+        debugPrint("🔥 Starting CIContext warmup...")
         let startTime = CFAbsoluteTimeGetCurrent()
         
         // 작은 더미 이미지로 GPU 파이프라인 워밍업 (더 현실적인 크기)
@@ -191,7 +191,7 @@ class CameraManager: NSObject, ObservableObject {
         _ = ciContext.createCGImage(dummyImage, from: dummyImage.extent)
         
         let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-        print("✅ CIContext warmed up in \(String(format: "%.3f", elapsed))s")
+        debugPrint("✅ CIContext warmed up in \(String(format: "%.3f", elapsed))s")
     }
     
     // MARK: - Session Control
@@ -233,24 +233,24 @@ class CameraManager: NSObject, ObservableObject {
     
     func capturePhoto() async throws -> UIImage? {
         let captureStartTime = CFAbsoluteTimeGetCurrent()
-        print("📸 Starting photo capture...")
+        debugPrint("📸 Starting photo capture...")
         
         // 세션이 실행 중인지 확인
         guard isSessionRunning else {
-            print("⚠️ Camera session not running")
+            debugPrint("⚠️ Camera session not running")
             return nil
         }
         
         // 중복 촬영 방지
         guard !isCapturingPhoto else {
-            print("⚠️ Already capturing photo")
+            debugPrint("⚠️ Already capturing photo")
             return nil
         }
         
         // ⚡️ 첫 프레임이 준비될 때까지 대기 (최대 1초, 하지만 더 효율적으로)
         if !isFrameReady {
             let waitStartTime = CFAbsoluteTimeGetCurrent()
-            print("⚡️ Waiting for first frame...")
+            debugPrint("⚡️ Waiting for first frame...")
             for _ in 0..<20 {
                 if isFrameReady { break }
                 try? await Task.sleep(nanoseconds: 50_000_000) // 0.05초씩
@@ -258,12 +258,12 @@ class CameraManager: NSObject, ObservableObject {
             
             // 여전히 프레임이 안 오면 에러
             guard isFrameReady else {
-                print("❌ Frame not ready after 1 second")
+                debugPrint("❌ Frame not ready after 1 second")
                 return nil
             }
             
             let waitElapsed = CFAbsoluteTimeGetCurrent() - waitStartTime
-            print("⚡️ Frame ready after \(String(format: "%.3f", waitElapsed))s")
+            debugPrint("⚡️ Frame ready after \(String(format: "%.3f", waitElapsed))s")
         }
         
         isCapturingPhoto = true
@@ -282,7 +282,7 @@ class CameraManager: NSObject, ObservableObject {
                 // ⚡️ lock으로 안전하게 체크
                 captureLock.lock()
                 if self.photoContinuation != nil {
-                    print("⚠️ Photo capture timeout")
+                    debugPrint("⚠️ Photo capture timeout")
                     self.photoContinuation?.resume(returning: nil)
                     self.photoContinuation = nil
                 }
@@ -291,7 +291,7 @@ class CameraManager: NSObject, ObservableObject {
         }
         
         let captureElapsed = CFAbsoluteTimeGetCurrent() - captureStartTime
-        print("✅ Photo captured in \(String(format: "%.3f", captureElapsed))s")
+        debugPrint("✅ Photo captured in \(String(format: "%.3f", captureElapsed))s")
         
         return result
     }
@@ -308,7 +308,7 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         // ⚡️ 첫 프레임 도착 표시
         if !isFrameReady {
             isFrameReady = true
-            print("✅ First frame ready!")
+            debugPrint("✅ First frame ready!")
         }
         
         // 촬영 중일 때만 프레임 캡처
@@ -325,7 +325,7 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }
         
         let processingElapsed = CFAbsoluteTimeGetCurrent() - frameProcessStartTime
-        print("🎬 Frame processed in \(String(format: "%.3f", processingElapsed))s")
+        debugPrint("🎬 Frame processed in \(String(format: "%.3f", processingElapsed))s")
         
         // UIImage 생성
         let image = UIImage(cgImage: cgImage, scale: 1.0, orientation: .right)
@@ -336,7 +336,7 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
             photoContinuation = nil
             captureLock.unlock()
             
-            print("✅ Resuming continuation with image")
+            debugPrint("✅ Resuming continuation with image")
             // continuation은 이미 MainActor context에서 생성되었으므로 안전
             continuation.resume(returning: image)
         } else {
