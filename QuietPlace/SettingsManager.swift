@@ -23,7 +23,7 @@ class SettingsManager: ObservableObject {
                 return
             }
             UserDefaults.standard.set(previewScale, forKey: "previewScale")
-            print("✅ Preview scale saved: \(Int(previewScale * 100))%")
+            debugPrint("✅ Preview scale saved: \(Int(previewScale * 100))%")
         }
     }
     
@@ -31,7 +31,7 @@ class SettingsManager: ObservableObject {
     @Published var tapToCapture: Bool {
         didSet {
             UserDefaults.standard.set(tapToCapture, forKey: "tapToCapture")
-            print("✅ Tap to capture: \(tapToCapture ? "ON" : "OFF")")
+            debugPrint("✅ Tap to capture: \(tapToCapture ? "ON" : "OFF")")
         }
     }
     
@@ -45,7 +45,7 @@ class SettingsManager: ObservableObject {
         // 탭 촬영 기능 (기본값: 활성화)
         self.tapToCapture = UserDefaults.standard.object(forKey: "tapToCapture") as? Bool ?? true
         
-        print("✅ Settings loaded - Preview scale: \(Int(previewScale * 100))%, Tap to capture: \(tapToCapture ? "ON" : "OFF")")
+        debugPrint("✅ Settings loaded - Preview scale: \(Int(previewScale * 100))%, Tap to capture: \(tapToCapture ? "ON" : "OFF")")
     }
     
     // MARK: - Reset Settings
@@ -53,7 +53,7 @@ class SettingsManager: ObservableObject {
     func resetToDefaults() {
         previewScale = 0.30  // 30%로 리셋
         tapToCapture = true  // 탭 촬영 활성화
-        print("✅ Settings reset to defaults")
+        debugPrint("✅ Settings reset to defaults")
     }
 }
 

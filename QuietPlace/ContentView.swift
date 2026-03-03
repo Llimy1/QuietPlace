@@ -137,7 +137,7 @@ struct ContentView: View {
     // MARK: - 권한 요청
     
     private func requestAllPermissions() async {
-        print("🔐 앱 시작 시 권한 요청 시작...")
+        debugPrint("🔐 앱 시작 시 권한 요청 시작...")
         
         // 카메라와 사진 라이브러리 권한을 동시에 요청
         async let cameraRequest: Void = requestCameraPermission()
@@ -146,7 +146,7 @@ struct ContentView: View {
         // 두 권한 요청이 모두 완료될 때까지 대기
         let _ = await (cameraRequest, photosRequest)
         
-        print("✅ 모든 권한 요청 완료")
+        debugPrint("✅ 모든 권한 요청 완료")
     }
     
     private func requestCameraPermission() async {
@@ -156,11 +156,11 @@ struct ContentView: View {
         case .notDetermined:
             // 권한이 결정되지 않았으면 요청
             let granted = await AVCaptureDevice.requestAccess(for: .video)
-            print("📷 카메라 권한: \(granted ? "허용됨" : "거부됨")")
+            debugPrint("📷 카메라 권한: \(granted ? "허용됨" : "거부됨")")
         case .authorized:
-            print("📷 카메라 권한: 이미 허용됨")
+            debugPrint("📷 카메라 권한: 이미 허용됨")
         case .denied, .restricted:
-            print("📷 카메라 권한: 거부됨 또는 제한됨")
+            debugPrint("📷 카메라 권한: 거부됨 또는 제한됨")
         @unknown default:
             break
         }
@@ -174,11 +174,11 @@ struct ContentView: View {
             // 권한이 결정되지 않았으면 요청
             let newStatus = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
             let granted = (newStatus == .authorized || newStatus == .limited)
-            print("📸 사진 라이브러리 권한: \(granted ? "허용됨" : "거부됨")")
+            debugPrint("📸 사진 라이브러리 권한: \(granted ? "허용됨" : "거부됨")")
         case .authorized, .limited:
-            print("📸 사진 라이브러리 권한: 이미 허용됨")
+            debugPrint("📸 사진 라이브러리 권한: 이미 허용됨")
         case .denied, .restricted:
-            print("📸 사진 라이브러리 권한: 거부됨 또는 제한됨")
+            debugPrint("📸 사진 라이브러리 권한: 거부됨 또는 제한됨")
         @unknown default:
             break
         }

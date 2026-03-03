@@ -27,28 +27,48 @@ class VolumeButtonHandler: ObservableObject {
     private init() {}  // Singleton이므로 private init
     
     func startMonitoring() {
-        print("🔊 [Volume] startMonitoring called")
+        debugPrint("🔊 [Volume] startMonitoring called")
         
         guard !isMonitoring else {
-            print("🔊 [Volume] Already monitoring")
+            debugPrint("🔊 [Volume] Already monitoring")
             return
         }
+        
+        // 기존 리소스 정리
+        cleanup()
         
         setupAudioSession()
         setupHiddenVolumeView()
         setupVolumeObservation()
         isMonitoring = true
-        print("🔊 [Volume] Monitoring started")
+        debugPrint("🔊 [Volume] Monitoring started successfully")
     }
     
     func stopMonitoring() {
-        print("🔊 [Volume] stopMonitoring called")
+        debugPrint("🔊 [Volume] stopMonitoring called")
         
         guard isMonitoring else {
             return
         }
         
         isMonitoring = false
+        cleanup()
+        debugPrint("🔊 [Volume] Monitoring stopped")
+    }
+    
+    /// 재시작 - 갤러리에서 돌아올 때 사용
+    func restartMonitoring() {
+        debugPrint("🔊 [Volume] Restarting monitoring...")
+        stopMonitoring()
+        
+        // 짧은 지연 후 재시작 (리소스 정리 시간 확보)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.startMonitoring()
+        }
+    }
+    
+    /// 내부 정리 함수
+    private func cleanup() {
         observation?.invalidate()
         observation = nil
         
@@ -61,7 +81,7 @@ class VolumeButtonHandler: ObservableObject {
         hiddenVolumeView = nil
         volumeView = nil
         
-        print("🔊 [Volume] Monitoring stopped")
+        debugPrint("🔊 [Volume] Resources cleaned up")
     }
     
     private func setupHiddenVolumeView() {
@@ -82,7 +102,7 @@ class VolumeButtonHandler: ObservableObject {
             window.addSubview(volumeView)
             self.hiddenVolumeView = volumeView
             
-            print("✅ Hidden volume view added to suppress system UI")
+            debugPrint("✅ Hidden volume view added to suppress system UI")
         }
     }
     
@@ -97,117 +117,87 @@ class VolumeButtonHandler: ObservableObject {
             // 현재 볼륨 저장
             previousVolume = audioSession?.outputVolume ?? 0.5
             
-            print("✅ Audio session setup complete. Current volume: \(previousVolume)")
+            debugPrint("✅ Audio session setup complete. Current volume: \(previousVolume)")
             
             // 볼륨을 중간값으로 설정 (버튼 감지를 위해)
             if previousVolume <= 0.1 || previousVolume >= 0.9 {
                 setSystemVolume(0.5)
                 previousVolume = 0.5
-                print("⚙️ Volume adjusted to 0.5 for better detection")
+                debugPrint("⚙️ Volume adjusted to 0.5 for better detection")
             }
         } catch {
-            print("❌ Failed to setup audio session: \(error)")
+            debugPrint("❌ Failed to setup audio session: \(error)")
         }
     }
     
     private func setupVolumeObservation() {
         guard let audioSession = audioSession else {
-            print("❌ Cannot setup volume observation: audioSession is nil")
+            debugPrint("❌ Cannot setup volume observation: audioSession is nil")
             return
         }
         
         observation = audioSession.observe(\.outputVolume, options: [.new, .old]) { [weak self] session, change in
             guard let self = self, let newVolume = change.newValue else { return }
             
-            print("🔊 Volume changed: \(self.previousVolume) → \(newVolume)")
+            debugPrint("🔊 Volume changed: \(self.previousVolume) → \(newVolume)")
             
             Task { @MainActor in
                 self.handleVolumeChange(newVolume)
             }
         }
         
-        print("✅ Volume observation setup complete")
+        debugPrint("✅ Volume observation setup complete")
     }
     
     private func handleVolumeChange(_ newVolume: Float) {
         let threshold: Float = 0.01
         
-        print("🔊 handleVolumeChange called: prev=\(previousVolume), new=\(newVolume), diff=\(newVolume - previousVolume)")
+        debugPrint("🔊 Volume: \(previousVolume) → \(newVolume)")
         
         if newVolume > previousVolume + threshold {
-            // 볼륨 업 버튼 눌림
-            print("🔊 ⬆️ Volume UP detected - BEFORE: volumeUpPressed = \(volumeUpPressed)")
-            
-            // ⚡️ MainActor에서 즉시 업데이트 (동기적으로)
+            // 볼륨 업
+            debugPrint("🔊 ⬆️ Volume UP")
             volumeUpPressed = true
-            print("🔊 ⬆️ Volume UP detected - AFTER: volumeUpPressed = \(volumeUpPressed)")
-            
-            // SwiftUI가 변경을 감지하도록 명시적으로 objectWillChange 트리거
             objectWillChange.send()
-            print("🔊 ⬆️ objectWillChange.send() called")
             
-            // 즉시 원래 볼륨으로 복원 (UI 이벤트 중복 방지)
             setSystemVolume(previousVolume)
             
-            // 짧은 지연 후 상태 리셋
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                print("🔊 ⬆️ Volume UP reset - BEFORE: volumeUpPressed = \(self.volumeUpPressed)")
                 self.volumeUpPressed = false
-                print("🔊 ⬆️ Volume UP reset - AFTER: volumeUpPressed = \(self.volumeUpPressed)")
                 self.objectWillChange.send()
             }
             
         } else if newVolume < previousVolume - threshold {
-            // 볼륨 다운 버튼 눌림
-            print("🔊 ⬇️ Volume DOWN detected - BEFORE: volumeDownPressed = \(volumeDownPressed)")
-            
-            // ⚡️ MainActor에서 즉시 업데이트 (동기적으로)
+            // 볼륨 다운
+            debugPrint("🔊 ⬇️ Volume DOWN")
             volumeDownPressed = true
-            print("🔊 ⬇️ Volume DOWN detected - AFTER: volumeDownPressed = \(volumeDownPressed)")
-            
-            // SwiftUI가 변경을 감지하도록 명시적으로 objectWillChange 트리거
             objectWillChange.send()
-            print("🔊 ⬇️ objectWillChange.send() called")
             
-            // 즉시 원래 볼륨으로 복원 (UI 이벤트 중복 방지)
             setSystemVolume(previousVolume)
             
-            // 짧은 지연 후 상태 리셋
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                print("🔊 ⬇️ Volume DOWN reset - BEFORE: volumeDownPressed = \(self.volumeDownPressed)")
                 self.volumeDownPressed = false
-                print("🔊 ⬇️ Volume DOWN reset - AFTER: volumeDownPressed = \(self.volumeDownPressed)")
                 self.objectWillChange.send()
             }
-        } else {
-            print("🔊 Volume change within threshold - ignoring")
         }
-        
-        // previousVolume은 업데이트하지 않음 (항상 같은 볼륨 유지)
     }
     
     private func setSystemVolume(_ volume: Float) {
-        print("🔊 setSystemVolume called: \(volume)")
+        debugPrint("🔊 Setting volume: \(volume)")
         
-        // MPVolumeView를 사용하여 시스템 볼륨 조절
         DispatchQueue.main.async {
             if self.volumeView == nil {
                 self.volumeView = MPVolumeView(frame: .zero)
-                print("🔊 Created new MPVolumeView for volume control")
             }
             
-            guard let volumeView = self.volumeView else {
-                print("❌ volumeView is nil")
+            guard let volumeView = self.volumeView,
+                  let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider else {
+                debugPrint("❌ Volume slider not found")
                 return
             }
             
-            // Slider를 찾아서 볼륨 설정
-            if let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider {
-                slider.value = volume
-                print("✅ Volume set to: \(volume)")
-            } else {
-                print("❌ Could not find volume slider in MPVolumeView")
-            }
+            slider.value = volume
+            debugPrint("✅ Volume set to: \(volume)")
         }
     }
     

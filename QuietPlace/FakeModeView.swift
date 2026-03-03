@@ -198,6 +198,10 @@ struct FakeModeView: View {
                     if !cameraManager.isSessionRunning && cameraManager.isAuthorized {
                         cameraManager.startSession()
                     }
+                    
+                    // ⚡️ 볼륨 핸들러 재시작 (다른 화면에서 돌아올 때)
+                    volumeHandler.restartMonitoring()
+                    
                 case .background, .inactive:
                     stopClock()
                 @unknown default:
@@ -215,7 +219,7 @@ struct FakeModeView: View {
                 }
             }
             .onAppear {
-                print("📱 [FakeMode] View appeared")
+                debugPrint("📱 [FakeMode] View appeared")
                 
                 gradientColors = generateRandomGradient()
                 startClock()
@@ -274,7 +278,7 @@ struct FakeModeView: View {
     private func takePhoto() {
         // 이미 촬영 중이면 무시
         guard !isTakingPhoto else {
-            print("⚠️ Photo capture already in progress, ignoring")
+            debugPrint("⚠️ Photo capture already in progress, ignoring")
             return
         }
         
@@ -292,7 +296,7 @@ struct FakeModeView: View {
                     }
                 }
             } catch {
-                print("❌ Photo capture failed: \(error)")
+                debugPrint("❌ Photo capture failed: \(error)")
             }
             
             isTakingPhoto = false
