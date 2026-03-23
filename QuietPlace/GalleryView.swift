@@ -16,7 +16,6 @@ struct GalleryView: View {
     @State private var selectedPhotos: Set<String> = []  // PhotoItem ID로 변경
     @State private var showFullscreen = false
     @State private var selectedPhotoIndex = 0
-    @State private var showMenu = false
     @State private var isDownloading = false
     @State private var showDownloadAlert = false
     @State private var downloadMessage = ""
@@ -160,17 +159,13 @@ struct GalleryView: View {
                 Text(photoDataManager.errorMessage ?? "알 수 없는 오류가 발생했습니다")
             }
             .onAppear {
-                // Refresh photos when gallery appears
-                photoDataManager.loadPhotos()
-                
-                // Prefetching 제거 - 오히려 느림
+                Task {
+                    await photoDataManager.loadPhotosAsync()
+                }
             }
             .onDisappear {
-                // Clear memory cache when leaving gallery to free up memory
-                // Disk cache remains for fast loading next time
                 Task {
                     ThumbnailCache.shared.memoryCache.removeAllObjects()
-                    debugPrint("🧹 Gallery memory cache cleared")
                 }
             }
             .overlay {
@@ -207,29 +202,6 @@ struct GalleryView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d"
         return formatter.string(from: date)
-    }
-    
-    // MARK: - Prefetching
-    
-    private func prefetchThumbnails() async {
-        let screenWidth = UIScreen.main.bounds.width
-        let thumbnailSize = (screenWidth / 3) * UIScreen.main.scale
-        let size = CGSize(width: thumbnailSize, height: thumbnailSize)
-        
-        // 처음 20개 사진만 사전 로딩 (백그라운드에서)
-        let photosToPreload = Array(photoDataManager.photos.prefix(20))
-        
-        debugPrint("🔄 Prefetching \(photosToPreload.count) thumbnails...")
-        
-        await withTaskGroup(of: Void.self) { group in
-            for photo in photosToPreload {
-                group.addTask {
-                    _ = await photo.getThumbnailAsync(size: size)
-                }
-            }
-        }
-        
-        debugPrint("✅ Prefetching complete!")
     }
     
     // MARK: - Actions
@@ -333,84 +305,6 @@ struct BottomNavButton: View {
             }
             .foregroundColor(isActive ? .blue : .gray)
             .frame(maxWidth: .infinity)
-        }
-    }
-}
-
-// 갤러리 메뉴 바텀 시트 (삭제 가능 - 더 이상 필요 없음)
-struct GalleryMenuBottomSheet: View {
-    @Binding var showMenu: Bool
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            // 핸들
-            RoundedRectangle(cornerRadius: 3)
-                .fill(Color.gray)
-                .frame(width: 40, height: 5)
-                .padding(.top, 12)
-            
-            VStack(spacing: 12) {
-                GalleryMenuButton(
-                    title: "카메라 모드",
-                    icon: "camera.fill"
-                ) {
-                    showMenu = false
-                    // TODO: 카메라로 이동
-                }
-                
-                GalleryMenuButton(
-                    title: "조용한 모드",
-                    icon: "moon.fill"
-                ) {
-                    showMenu = false
-                    // TODO: Fake Mode로 이동
-                }
-                
-                GalleryMenuButton(
-                    title: "설정",
-                    icon: "gearshape.fill"
-                ) {
-                    showMenu = false
-                    // TODO: 설정으로 이동
-                }
-            }
-            .padding(.vertical, 20)
-        }
-        .frame(maxWidth: .infinity)
-        .background(Color(red: 0.11, green: 0.11, blue: 0.12))
-        .cornerRadius(20)
-        .padding(.horizontal, 0)
-    }
-}
-
-// 갤러리 메뉴 버튼
-struct GalleryMenuButton: View {
-    let title: String
-    let icon: String
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.system(size: 20))
-                    .frame(width: 30)
-                
-                Text(title)
-                    .font(.system(size: 17, weight: .regular))
-                
-                Spacer()
-                
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14))
-                    .foregroundColor(.gray)
-            }
-            .foregroundColor(.primary)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(Color(red: 0.17, green: 0.17, blue: 0.18))
-            .cornerRadius(12)
-            .padding(.horizontal, 20)
         }
     }
 }

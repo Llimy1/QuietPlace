@@ -91,9 +91,4 @@ enum AppConstants {
         static let tapToCapture = "tapToCapture"
     }
     
-    // MARK: - Colors (Optional - 필요시 사용)
-    
-    enum Colors {
-        // 브랜드 컬러는 BrandPalette에 이미 있으므로 중복 제거
-    }
 }

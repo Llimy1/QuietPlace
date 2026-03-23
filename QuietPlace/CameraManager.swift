@@ -137,10 +137,7 @@ class CameraManager: NSObject, ObservableObject {
                         // ⚡️ 최대 해상도 설정 (4K 지원 기기는 3840x2160, 그 외는 1920x1080)
                         // 해상도를 명시하지 않으면 AVCaptureSession이 자동으로 적절한 해상도 선택
                         self.videoOutput.videoSettings = [
-                            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                            // 주석: 해상도를 명시적으로 설정하려면 아래 주석 해제
-                            // kCVPixelBufferWidthKey as String: 3840,
-                            // kCVPixelBufferHeightKey as String: 2160
+                            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
                         ]
                         
                         self.videoOutput.alwaysDiscardsLateVideoFrames = false

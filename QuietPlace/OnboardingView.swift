@@ -15,7 +15,7 @@ struct OnboardingView: View {
     @State private var cameraPermissionGranted = false
     @State private var photosPermissionGranted = false
     
-    private let totalPages = 7  // 6 → 7로 변경
+    private let totalPages = 7
     
     var body: some View {
         ZStack {
@@ -24,26 +24,6 @@ struct OnboardingView: View {
                 .ignoresSafeArea()
             
             VStack(spacing: 0) {
-                // 건너뛰기 버튼 (마지막 페이지 제외)
-                if currentPage < totalPages - 1 {
-                    HStack {
-                        Spacer()
-                        Button(action: {
-                            withAnimation(.easeInOut(duration: 0.25)) {
-                                currentPage = totalPages - 1
-                            }
-                        }) {
-                            Text("건너뛰기")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.white.opacity(0.6))
-                                .padding(.horizontal, 20)
-                                .padding(.vertical, 12)
-                        }
-                    }
-                    .padding(.top, 50)
-                    .padding(.trailing, 20)
-                }
-                
                 // 페이지 컨텐츠
                 TabView(selection: $currentPage) {
                     // 1페이지: 환영
@@ -125,6 +105,31 @@ struct OnboardingView: View {
                 }
                 .padding(.bottom, 40)
             }
+            
+            // 건너뛰기 버튼 - 최상단 레이어 (마지막 페이지 제외)
+            if currentPage < totalPages - 1 {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                currentPage = totalPages - 1
+                            }
+                        }) {
+                            Text("건너뛰기")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(.white.opacity(0.6))
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 12)
+                                .background(Color.black.opacity(0.3))
+                                .cornerRadius(20)
+                        }
+                        .padding(.top, 50)
+                        .padding(.trailing, 20)
+                    }
+                    Spacer()
+                }
+            }
         }
     }
     
@@ -187,81 +192,89 @@ struct LockScreenPage: View {
     @State private var currentTime = Date()
     
     var body: some View {
-        VStack(spacing: 36) {
+        VStack(spacing: 30) {
             Spacer()
             
             // 타이틀
             HStack(spacing: 8) {
                 Image(systemName: "moon.fill")
-                    .font(.system(size: 28))
+                    .font(.system(size: 24))
                     .foregroundColor(BrandPalette.primaryBlue)
                 
                 Text("조용한 모드")
-                    .font(.system(size: 32, weight: .bold))
+                    .font(.system(size: 28, weight: .bold))
                     .foregroundColor(.white)
             }
+            .padding(.bottom, 10)
             
-            // 간단한 잠금화면 일러스트
+            // 간단한 잠금화면 일러스트 + 프리뷰
             ZStack {
                 // 폰 배경
-                RoundedRectangle(cornerRadius: 50)
+                RoundedRectangle(cornerRadius: 40)
                     .fill(Color.black)
-                    .frame(width: 220, height: 380)
+                    .frame(width: 180, height: 320)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 50)
+                        RoundedRectangle(cornerRadius: 40)
                             .stroke(
                                 LinearGradient(
                                     colors: [Color.white.opacity(0.3), Color.white.opacity(0.1)],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 ),
-                                lineWidth: 3
+                                lineWidth: 2.5
                             )
                     )
-                    .shadow(color: .black.opacity(0.6), radius: 40, x: 0, y: 20)
+                    .shadow(color: .black.opacity(0.4), radius: 25, x: 0, y: 12)
                 
                 // 잠금화면 내용
-                VStack(spacing: 16) {
+                VStack(spacing: 0) {
                     // 시간
                     Text(timeString)
-                        .font(.system(size: 56, weight: .bold))
+                        .font(.system(size: 44, weight: .bold))
                         .foregroundColor(.white)
+                        .padding(.top, 35)
                     
                     // 날짜
                     Text(dateString)
-                        .font(.system(size: 14))
+                        .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.7))
+                        .padding(.top, 4)
                     
                     Spacer()
-                        .frame(height: 60)
                     
-                    // 자물쇠 아이콘
+                    // 하단 카메라 프리뷰 (작은 크기)
                     ZStack {
-                        Circle()
-                            .fill(Color.white.opacity(0.15))
-                            .frame(width: 70, height: 70)
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.blue.opacity(0.3), Color.purple.opacity(0.3)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 70, height: 52)
                         
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 32))
-                            .foregroundColor(.white.opacity(0.8))
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(.white.opacity(0.7))
                     }
-                    
-                    Text("잠겨 있음")
-                        .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.5))
-                        .padding(.top, 8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(Color.white.opacity(0.3), lineWidth: 1.5)
+                    )
+                    .padding(.bottom, 18)
                 }
-                .padding(.vertical, 50)
+                .frame(width: 180, height: 320)
             }
             
             // 설명
-            VStack(spacing: 12) {
-                Text("조용한 환경에서도")
-                    .font(.system(size: 17))
+            VStack(spacing: 10) {
+                Text("잠금화면처럼 보이면서")
+                    .font(.system(size: 16))
                     .foregroundColor(.white.opacity(0.8))
                 
-                Text("방해하지 않고 촬영할 수 있어요")
-                    .font(.system(size: 17))
+                Text("하단에 작은 프리뷰 제공")
+                    .font(.system(size: 16))
                     .foregroundColor(.white.opacity(0.8))
             }
             .multilineTextAlignment(.center)
@@ -270,7 +283,8 @@ struct LockScreenPage: View {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.green)
-                Text("화면 하단에 작은 프리뷰 제공")
+                    .font(.system(size: 16))
+                Text("조용한 환경에서도 자연스럽게")
                     .font(.system(size: 14))
                     .foregroundColor(.white.opacity(0.7))
             }
@@ -433,105 +447,108 @@ struct SimpleVolumeButton: View {
 
 struct CaptureNotesPage: View {
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            
-            // 아이콘
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.blue.opacity(0.3), Color.cyan.opacity(0.3)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 20) {
+                Spacer()
+                    .frame(height: 80) // 건너뛰기 버튼 공간 확보
+                
+                // 아이콘
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.blue.opacity(0.3), Color.cyan.opacity(0.3)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
-                    )
-                    .frame(width: 90, height: 90)
-                
-                Image(systemName: "info.circle.fill")
-                    .font(.system(size: 45))
-                    .foregroundColor(.blue)
-            }
-            
-            // 타이틀
-            Text("촬영 방법")
-                .font(.system(size: 32, weight: .bold))
-                .foregroundColor(.white)
-            
-            // 설명
-            Text("두 가지 방법으로 촬영할 수 있어요")
-                .font(.system(size: 16))
-                .foregroundColor(.white.opacity(0.7))
-                .padding(.bottom, 8)
-            
-            // 주의사항 카드들 (2열로 정리)
-            VStack(spacing: 14) {
-                // 첫 번째 행: 촬영 방법
-                HStack(spacing: 14) {
-                    // 볼륨 버튼
-                    CompactNoticeCard(
-                        icon: "speaker.wave.2.fill",
-                        iconColor: .purple,
-                        title: "볼륨 버튼",
-                        description: "가장 편리한 방법"
-                    )
+                        .frame(width: 80, height: 80)
                     
-                    // 화면 탭
-                    CompactNoticeCard(
-                        icon: "hand.tap.fill",
-                        iconColor: .blue,
-                        title: "화면 탭",
-                        description: "통화 중 유용"
-                    )
+                    Image(systemName: "info.circle.fill")
+                        .font(.system(size: 40))
+                        .foregroundColor(.blue)
                 }
                 
-                // 두 번째 행: 팁
-                HStack(spacing: 14) {
-                    // 진동 피드백
-                    CompactNoticeCard(
-                        icon: "iphone.radiowaves.left.and.right",
-                        iconColor: .green,
-                        title: "진동으로 확인",
-                        description: "촬영 완료 알림"
-                    )
-                    
-                    // 설정
-                    CompactNoticeCard(
-                        icon: "gearshape.fill",
-                        iconColor: .orange,
-                        title: "설정 가능",
-                        description: "탭 촬영 켜기/끄기"
-                    )
-                }
-            }
-            .padding(.horizontal, 28)
-            
-            // 추가 팁
-            VStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: "lightbulb.fill")
-                        .foregroundColor(.yellow)
-                        .font(.system(size: 16))
-                    
-                    Text("통화/음악 재생 중에는")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.white.opacity(0.9))
-                }
+                // 타이틀
+                Text("촬영 방법")
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundColor(.white)
                 
-                Text("볼륨 버튼 2번 누르기 or 화면 탭 사용")
-                    .font(.system(size: 13))
+                // 설명
+                Text("두 가지 방법으로 촬영할 수 있어요")
+                    .font(.system(size: 15))
                     .foregroundColor(.white.opacity(0.7))
+                    .padding(.bottom, 4)
+                
+                // 주의사항 카드들 (2열로 정리)
+                VStack(spacing: 12) {
+                    // 첫 번째 행: 촬영 방법
+                    HStack(spacing: 12) {
+                        // 볼륨 버튼
+                        CompactNoticeCard(
+                            icon: "speaker.wave.2.fill",
+                            iconColor: .purple,
+                            title: "볼륨 버튼",
+                            description: "가장 편리한 방법"
+                        )
+                        
+                        // 화면 탭
+                        CompactNoticeCard(
+                            icon: "hand.tap.fill",
+                            iconColor: .blue,
+                            title: "화면 탭",
+                            description: "통화 중 유용"
+                        )
+                    }
+                    
+                    // 두 번째 행: 팁
+                    HStack(spacing: 12) {
+                        // 진동 피드백
+                        CompactNoticeCard(
+                            icon: "iphone.radiowaves.left.and.right",
+                            iconColor: .green,
+                            title: "진동으로 확인",
+                            description: "촬영 완료 알림"
+                        )
+                        
+                        // 설정
+                        CompactNoticeCard(
+                            icon: "gearshape.fill",
+                            iconColor: .orange,
+                            title: "설정 가능",
+                            description: "탭 촬영 켜기/끄기"
+                        )
+                    }
+                }
+                .padding(.horizontal, 28)
+                
+                // 추가 팁
+                VStack(spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "lightbulb.fill")
+                            .foregroundColor(.yellow)
+                            .font(.system(size: 15))
+                        
+                        Text("통화/음악 재생 중에는")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.white.opacity(0.9))
+                    }
+                    
+                    Text("볼륨 버튼 2번 누르기 or 화면 탭 사용")
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.7))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color.white.opacity(0.08))
+                .cornerRadius(12)
+                .padding(.horizontal, 28)
+                .padding(.top, 4)
+                
+                Spacer()
+                    .frame(height: 140) // 하단 버튼 공간 확보
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            .background(Color.white.opacity(0.08))
-            .cornerRadius(14)
-            .padding(.horizontal, 28)
-            .padding(.top, 8)
-            
-            Spacer()
         }
-        .padding(.vertical, 20)
     }
 }
 
@@ -1045,50 +1062,6 @@ struct FeatureRow: View {
             
             Spacer()
         }
-    }
-}
-
-struct NoticeCard: View {
-    let icon: String
-    let iconColor: Color
-    let title: String
-    let description: String
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            // 아이콘
-            ZStack {
-                Circle()
-                    .fill(iconColor.opacity(0.2))
-                    .frame(width: 40, height: 40)
-                
-                Image(systemName: icon)
-                    .font(.system(size: 18))
-                    .foregroundColor(iconColor)
-            }
-            
-            // 텍스트
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                
-                Text(description)
-                    .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.7))
-                    .lineLimit(2)
-            }
-            
-            Spacer()
-        }
-        .padding(14)
-        .background(Color.white.opacity(0.05))
-        .cornerRadius(14)
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(iconColor.opacity(0.2), lineWidth: 1)
-        )
     }
 }
 

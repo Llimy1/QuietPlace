@@ -46,8 +46,6 @@ struct CameraPreview: UIViewRepresentable {
     
     static func dismantleUIView(_ uiView: PreviewView, coordinator: ()) {
         debugPrint("🎥 CameraPreview dismantled")
-        // ⚡️ 세션 연결 해제하지 않음 - 재사용을 위해
-        // uiView.videoPreviewLayer.session = nil
     }
 }
 

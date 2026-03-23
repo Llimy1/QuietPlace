@@ -79,32 +79,6 @@ class ThumbnailCache {
     
     // MARK: - Private Methods
     
-    /// ⚡️ 플레이스홀더 생성 (즉시 반환)
-    private func createPlaceholder(size: CGSize) -> UIImage? {
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { context in
-            // 회색 배경
-            UIColor.systemGray5.setFill()
-            context.fill(CGRect(origin: .zero, size: size))
-            
-            // 카메라 아이콘
-            let iconSize: CGFloat = min(size.width, size.height) * 0.3
-            let iconRect = CGRect(
-                x: (size.width - iconSize) / 2,
-                y: (size.height - iconSize) / 2,
-                width: iconSize,
-                height: iconSize
-            )
-            
-            if let cameraIcon = UIImage(systemName: "photo")?.withConfiguration(
-                UIImage.SymbolConfiguration(pointSize: iconSize * 0.6, weight: .light)
-            ) {
-                UIColor.systemGray3.setFill()
-                cameraIcon.draw(in: iconRect)
-            }
-        }
-    }
-    
     /// 고성능 썸네일 생성 (ImageIO 사용, 알파 채널 없음) - nonisolated
     nonisolated private func generateThumbnail(from url: URL, size: CGSize) -> UIImage? {
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {

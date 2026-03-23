@@ -113,58 +113,6 @@ class PhotoDataManager: ObservableObject {
         return photoItem
     }
     
-    /// 동기 저장 (호환성 유지, 사용 비권장)
-    @available(*, deprecated, message: "Use savePhotoAsync instead")
-    func savePhoto(_ image: UIImage) -> PhotoItem? {
-        // 동기 버전은 더 이상 권장하지 않지만 호환성을 위해 유지
-        let photoId = UUID().uuidString
-        
-        // 항상 HEIF 포맷으로 저장 (iOS 기본, 고품질, 작은 용량)
-        let fileExtension: String
-        let imageData: Data?
-        
-        if #available(iOS 11.0, *) {
-            fileExtension = "heic"
-            imageData = image.heicData()
-        } else {
-            // Fallback to JPEG for iOS 10 and below
-            fileExtension = "jpg"
-            imageData = image.jpegData(compressionQuality: 0.85)
-        }
-        
-        let fileName = "\(photoId).\(fileExtension)"
-        let fileURL = photosDirectory.appendingPathComponent(fileName)
-        
-        guard let data = imageData else {
-            debugPrint("❌ Failed to convert image to data")
-            errorMessage = "이미지 데이터 변환에 실패했습니다"
-            showError = true
-            return nil
-        }
-        
-        do {
-            try data.write(to: fileURL)
-            
-            let photoItem = PhotoItem(
-                id: photoId,
-                fileName: fileName,
-                fileURL: fileURL,
-                createdDate: Date()
-            )
-            
-            photos.insert(photoItem, at: 0) // 최신 사진을 앞에
-            debugPrint("✅ Photo saved: \(fileName)")
-            
-            return photoItem
-            
-        } catch {
-            debugPrint("❌ Failed to save photo: \(error)")
-            errorMessage = "사진 저장에 실패했습니다: \(error.localizedDescription)"
-            showError = true
-            return nil
-        }
-    }
-    
     // MARK: - Load Photos
     
     /// ⚡️ 비동기 사진 로드 (UI 블록 없음)
@@ -213,43 +161,6 @@ class PhotoDataManager: ObservableObject {
             self.photos = loadedPhotos
             let elapsed = Date().timeIntervalSince(startTime)
             debugPrint("✅ Loaded \(loadedPhotos.count) photos in \(String(format: "%.2f", elapsed))s")
-        }
-    }
-    
-    /// 동기 로드 (호환성 유지, 사용 비권장)
-    @available(*, deprecated, message: "Use loadPhotosAsync instead")
-    func loadPhotos() {
-        do {
-            let fileURLs = try fileManager.contentsOfDirectory(
-                at: photosDirectory,
-                includingPropertiesForKeys: [.creationDateKey],
-                options: [.skipsHiddenFiles]
-            )
-            
-            photos = fileURLs.compactMap { url -> PhotoItem? in
-                // jpg 또는 heic 파일만 로드
-                let ext = url.pathExtension.lowercased()
-                guard ext == "jpg" || ext == "jpeg" || ext == "heic" else { return nil }
-                
-                let attributes = try? fileManager.attributesOfItem(atPath: url.path)
-                let createdDate = attributes?[.creationDate] as? Date ?? Date()
-                let photoId = url.deletingPathExtension().lastPathComponent
-                
-                return PhotoItem(
-                    id: photoId,
-                    fileName: url.lastPathComponent,
-                    fileURL: url,
-                    createdDate: createdDate
-                )
-            }
-            
-            // 날짜순 정렬 (최신순)
-            photos.sort { $0.createdDate > $1.createdDate }
-            
-            debugPrint("✅ Loaded \(photos.count) photos")
-            
-        } catch {
-            debugPrint("❌ Failed to load photos: \(error)")
         }
     }
     
@@ -334,7 +245,6 @@ class PhotoDataManager: ObservableObject {
     // MARK: - Get Photo by Date
     
     func photosByDate() -> [String: [PhotoItem]] {
-        let calendar = Calendar.current
         var grouped: [String: [PhotoItem]] = [:]
         
         for photo in photos {
