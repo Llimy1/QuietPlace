@@ -243,11 +243,16 @@ struct SettingsView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 20)
-                .padding(.bottom, 80) // 바텀 바 공간 확보
+                .padding(.bottom, 130) // 바텀 바 + 배너 광고 공간 확보
             }
             
             // 고정 바텀 네비게이션 바
             SettingsBottomNavigationBar(currentTab: $currentTab, previousTab: $previousTab)
+            
+            // 하단 배너 광고 (네비게이션 바 아래)
+            BannerAdView()
+                .frame(height: AppConstants.Ads.bannerHeight)
+                .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         }
         .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         .navigationTitle("설정")

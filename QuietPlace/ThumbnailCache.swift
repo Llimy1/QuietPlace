@@ -36,10 +36,14 @@ class ThumbnailCache {
             queue: .main
         ) { [weak self] _ in
             self?.memoryCache.removeAllObjects()
+            #if DEBUG
             print("⚠️ Memory warning - ThumbnailCache cleared")
+            #endif
         }
         
+        #if DEBUG
         print("✅ ThumbnailCache initialized (Memory: \(memoryCache.totalCostLimit / 1024 / 1024)MB, Disk: \(diskCacheDirectory.path))")
+        #endif
     }
     
     /// 썸네일 가져오기 (동기 - 디스크 I/O 포함, UI 즉시 반응)
@@ -218,7 +222,9 @@ class ThumbnailCache {
                     try? FileManager.default.removeItem(at: file)
                 }
             }
+            #if DEBUG
             print("✅ ThumbnailCache cleared (memory + disk)")
+            #endif
         }
     }
     
@@ -246,9 +252,11 @@ class ThumbnailCache {
                 }
             }
             
+            #if DEBUG
             if removedCount > 0 {
                 print("✅ Cleaned up \(removedCount) old thumbnails")
             }
+            #endif
         }
     }
     

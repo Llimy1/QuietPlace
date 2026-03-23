@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		18A1DE912F7163420085B609 /* GoogleMobileAds in Frameworks */ = {isa = PBXBuildFile; productRef = 18A1DE902F7163420085B609 /* GoogleMobileAds */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		181396862F56FDA0002EB8F0 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -29,9 +33,22 @@
 		1813968F2F56FDA0002EB8F0 /* QuietPlaceUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = QuietPlaceUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		18A1DE932F71638B0085B609 /* Exceptions for "QuietPlace" folder in "QuietPlace" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 181396772F56FDA0002EB8F0 /* QuietPlace */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		1813967A2F56FDA0002EB8F0 /* QuietPlace */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				18A1DE932F71638B0085B609 /* Exceptions for "QuietPlace" folder in "QuietPlace" target */,
+			);
 			path = QuietPlace;
 			sourceTree = "<group>";
 		};
@@ -52,6 +69,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				18A1DE912F7163420085B609 /* GoogleMobileAds in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +130,7 @@
 			);
 			name = QuietPlace;
 			packageProductDependencies = (
+				18A1DE902F7163420085B609 /* GoogleMobileAds */,
 			);
 			productName = QuietPlace;
 			productReference = 181396782F56FDA0002EB8F0 /* QuietPlace.app */;
@@ -195,6 +214,9 @@
 			);
 			mainGroup = 1813966F2F56FDA0002EB8F0;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				18A1DE8F2F7163420085B609 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 181396792F56FDA0002EB8F0 /* Products */;
 			projectDirPath = "";
@@ -401,6 +423,7 @@
 				DEVELOPMENT_TEAM = 6T6KKD96D4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = QuietPlace/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = QuietPlace;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSCameraUsageDescription = "사진 촬영을 위해 카메라 접근 권한이 필요합니다";
@@ -438,6 +461,7 @@
 				DEVELOPMENT_TEAM = 6T6KKD96D4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = QuietPlace/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = QuietPlace;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSCameraUsageDescription = "사진 촬영을 위해 카메라 접근 권한이 필요합니다";
@@ -588,6 +612,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		18A1DE8F2F7163420085B609 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/googleads/swift-package-manager-google-mobile-ads.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 13.1.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		18A1DE902F7163420085B609 /* GoogleMobileAds */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 18A1DE8F2F7163420085B609 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */;
+			productName = GoogleMobileAds;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 181396702F56FDA0002EB8F0 /* Project object */;
 }

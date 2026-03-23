@@ -91,4 +91,15 @@ enum AppConstants {
         static let tapToCapture = "tapToCapture"
     }
     
+    // MARK: - Ads
+    
+    enum Ads {
+        /// 배너 광고 높이
+        static let bannerHeight: CGFloat = 32
+        /// 네이티브 광고 높이
+        static let nativeAdHeight: CGFloat = 280
+        /// 네이티브 광고 표시 빈도 (N개 날짜 섹션마다)
+        static let nativeAdFrequency: Int = 1
+    }
+    
 }

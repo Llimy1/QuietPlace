@@ -51,16 +51,18 @@ struct GalleryView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
                             // 날짜별로 그룹핑된 사진들
-                            ForEach(groupedPhotos.keys.sorted(by: { key1, key2 in
+                            let sortedKeys = groupedPhotos.keys.sorted(by: { key1, key2 in
                                 // Today > Yesterday > 다른 날짜 순서
                                 if key1 == "Today" { return true }
                                 if key2 == "Today" { return false }
                                 if key1 == "Yesterday" { return true }
                                 if key2 == "Yesterday" { return false }
                                 return key1 > key2
-                            }), id: \.self) { dateKey in
+                            })
+                            
+                            ForEach(sortedKeys, id: \.self) { dateKey in
                                 if let photos = groupedPhotos[dateKey] {
-                                    PhotoSection(
+                                    PhotoSectionWithAds(
                                         title: "\(dateKey) - \(formattedDate(for: photos.first?.createdDate))",
                                         photos: photos,
                                         isSelectionMode: $isSelectionMode,
@@ -76,12 +78,17 @@ struct GalleryView: View {
                             }
                         }
                         .padding(.top, 20)
-                        .padding(.bottom, 80) // 바텀 바 공간 확보
+                        .padding(.bottom, 130) // 바텀 바 + 배너 광고 공간 확보
                     }
                 }
                 
                 // 고정 바텀 네비게이션 바 (항상 표시)
                 GalleryBottomNavigationBar(currentTab: $currentTab, previousTab: $previousTab)
+                
+                // 하단 배너 광고 (네비게이션 바 아래)
+                BannerAdView()
+                    .frame(height: AppConstants.Ads.bannerHeight)
+                    .background(Color(red: 0.11, green: 0.11, blue: 0.12))
             }
             
             // 선택 모드일 때 액션 바 (바텀 네비게이션 위에 표시)
@@ -94,7 +101,7 @@ struct GalleryView: View {
                         onDelete: deleteSelectedPhotos,
                         onDownload: downloadSelectedPhotos
                     )
-                    .padding(.bottom, 70) // 바텀 바 위에 표시
+                    .padding(.bottom, 120) // 바텀 바 + 배너 광고 위에 표시
                 }
             }
         }
@@ -309,7 +316,71 @@ struct BottomNavButton: View {
     }
 }
 
-// 사진 섹션
+// 사진 섹션 (날짜별 광고 1개 - 사진 중간에 삽입)
+struct PhotoSectionWithAds: View {
+    let title: String
+    let photos: [PhotoItem]
+    @Binding var isSelectionMode: Bool
+    @Binding var selectedPhotos: Set<String>
+    let onPhotoTap: (PhotoItem) -> Void
+    
+    /// 광고 삽입 위치 (사진 N장 뒤에 광고)
+    private let adInsertAfter = 6
+    
+    let columns = [
+        GridItem(.flexible(), spacing: 2),
+        GridItem(.flexible(), spacing: 2),
+        GridItem(.flexible(), spacing: 2)
+    ]
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 17, weight: .semibold))
+                .padding(.horizontal, 16)
+            
+            if photos.count <= adInsertAfter {
+                // 사진이 적으면: 그리드 전체 → 광고
+                photoGrid(photos: photos)
+                NativeAdCardView()
+            } else {
+                // 사진이 많으면: 앞부분 그리드 → 광고 → 나머지 그리드
+                let firstChunk = Array(photos.prefix(adInsertAfter))
+                let restChunk = Array(photos.dropFirst(adInsertAfter))
+                
+                photoGrid(photos: firstChunk)
+                NativeAdCardView()
+                photoGrid(photos: restChunk)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private func photoGrid(photos: [PhotoItem]) -> some View {
+        LazyVGrid(columns: columns, spacing: 2) {
+            ForEach(photos) { photo in
+                PhotoThumbnail(
+                    photo: photo,
+                    isSelected: selectedPhotos.contains(photo.id),
+                    isSelectionMode: isSelectionMode
+                )
+                .onTapGesture {
+                    if isSelectionMode {
+                        if selectedPhotos.contains(photo.id) {
+                            selectedPhotos.remove(photo.id)
+                        } else {
+                            selectedPhotos.insert(photo.id)
+                        }
+                    } else {
+                        onPhotoTap(photo)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 사진 섹션 (기본 - 광고 없음)
 struct PhotoSection: View {
     let title: String
     let photos: [PhotoItem]
