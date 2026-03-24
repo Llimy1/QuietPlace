@@ -7,9 +7,12 @@
 
 import SwiftUI
 import GoogleMobileAds
+import AppTrackingTransparency
 
 @main
 struct QuietPlaceApp: App {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var hasRequestedATT = false
     
     init() {
         // Google Mobile Ads SDK 초기화
@@ -19,10 +22,14 @@ struct QuietPlaceApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .task {
-                    // 앱 UI가 보인 후 ATT 권한 요청
-                    try? await Task.sleep(for: .seconds(1.5))
-                    _ = await ATTManager.shared.requestTrackingAuthorization()
+                .onChange(of: scenePhase) { oldPhase, newPhase in
+                    if newPhase == .active && !hasRequestedATT {
+                        hasRequestedATT = true
+                        // 앱이 active 상태가 된 후 ATT 요청 (다른 팝업이 끝난 뒤 호출되도록 딜레이)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                            ATTrackingManager.requestTrackingAuthorization { _ in }
+                        }
+                    }
                 }
         }
     }

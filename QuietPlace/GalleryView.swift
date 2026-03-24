@@ -29,22 +29,27 @@ struct GalleryView: View {
                 // 메인 컨텐츠
                 if photoDataManager.photos.isEmpty {
                     // 사진이 없을 때
-                    VStack(spacing: 20) {
-                        Spacer()
-                        
-                        Image(systemName: "photo.on.rectangle.angled")
-                            .font(.system(size: 60))
-                            .foregroundColor(.gray)
-                        
-                        Text("사진이 없습니다")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundColor(.white)
-                        
-                        Text("카메라로 사진을 촬영하세요")
-                            .font(.system(size: 15))
-                            .foregroundColor(.gray)
-                        
-                        Spacer()
+                    ScrollView {
+                        VStack(spacing: 20) {
+                            Spacer()
+                                .frame(height: 60)
+                            
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .font(.system(size: 60))
+                                .foregroundColor(.gray)
+                            
+                            Text("사진이 없습니다")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundColor(.white)
+                            
+                            Text("카메라로 사진을 촬영하세요")
+                                .font(.system(size: 15))
+                                .foregroundColor(.gray)
+                            
+                            NativeAdCardView()
+                                .padding(.top, 20)
+                        }
+                        .padding(.bottom, 130)
                     }
                 } else {
                     // 사진이 있을 때
