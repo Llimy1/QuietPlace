@@ -121,7 +121,7 @@ struct LensLogo: View {
 
 // MARK: - 브랜드 타이틀
 
-/// "QuitePlace" 타이틀
+/// "QuietPlace" 타이틀
 struct BrandTitle: View {
     let isDark: Bool
     var fontSize: CGFloat = 48

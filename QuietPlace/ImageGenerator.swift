@@ -1,6 +1,6 @@
 //
 //  ImageGenerator.swift
-//  QuitePlace
+//  QuietPlace
 //
 //  Created by 이민혁 on 2/28/26.
 //
@@ -38,7 +38,7 @@ struct ImageGenerator {
         BrandMark(size: 120)
             .shadow(radius: 10)
         
-        Text("QuitePlace")
+        Text("QuietPlace")
             .font(.system(size: 24, weight: .bold))
             .foregroundColor(.white)
     }

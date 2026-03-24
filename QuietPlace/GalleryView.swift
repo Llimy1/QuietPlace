@@ -385,7 +385,7 @@ struct PhotoSectionWithAds: View {
     }
 }
 
-// 사진 섹션 (기본 - 광고 없음)
+// 사진 섹션 (기본)
 struct PhotoSection: View {
     let title: String
     let photos: [PhotoItem]

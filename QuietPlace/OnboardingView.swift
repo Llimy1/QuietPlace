@@ -30,7 +30,7 @@ struct OnboardingView: View {
                     WelcomePage()
                         .tag(0)
                     
-                    // 2페이지: 잠금화면 위장
+                    // 2페이지: 조용한 모드
                     LockScreenPage()
                         .tag(1)
                     
@@ -269,7 +269,7 @@ struct LockScreenPage: View {
             
             // 설명
             VStack(spacing: 10) {
-                Text("잠금화면처럼 보이면서")
+                Text("깔끔한 인터페이스로")
                     .font(.system(size: 16))
                     .foregroundColor(.white.opacity(0.8))
                 
@@ -817,7 +817,7 @@ struct PermissionPage: View {
             
             // 설명
             Text(allPermissionsGranted 
-                ? "이제 QuitePlace를 사용할 수 있습니다" 
+                ? "이제 QuietPlace를 사용할 수 있습니다" 
                 : "앱 사용을 위해\n두 권한이 모두 필요합니다")
                 .font(.system(size: 17))
                 .foregroundColor(.white.opacity(0.7))
@@ -975,7 +975,7 @@ struct PermissionPage: View {
         
         // 이미 거부된 상태면 설정으로 안내
         if currentStatus == .denied || currentStatus == .restricted {
-            settingsAlertMessage = "카메라 권한이 거부되었습니다.\n설정 > QuitePlace에서 카메라 권한을 허용해주세요."
+            settingsAlertMessage = "카메라 권한이 거부되었습니다.\n설정 > QuietPlace에서 카메라 권한을 허용해주세요."
             showSettingsAlert = true
             return
         }
@@ -1008,7 +1008,7 @@ struct PermissionPage: View {
         
         // 이미 거부된 상태면 설정으로 안내
         if currentStatus == .denied || currentStatus == .restricted {
-            settingsAlertMessage = "사진 라이브러리 권한이 거부되었습니다.\n설정 > QuitePlace에서 사진 권한을 허용해주세요."
+            settingsAlertMessage = "사진 라이브러리 권한이 거부되었습니다.\n설정 > QuietPlace에서 사진 권한을 허용해주세요."
             showSettingsAlert = true
             return
         }

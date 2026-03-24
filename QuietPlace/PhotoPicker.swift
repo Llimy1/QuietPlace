@@ -1,6 +1,6 @@
 //
 //  PhotoPicker.swift
-//  QuitePlace
+//  QuietPlace
 //
 //  Created by 이민혁 on 2/23/26.
 //
