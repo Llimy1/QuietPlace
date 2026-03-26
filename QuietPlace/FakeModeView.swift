@@ -148,15 +148,9 @@ struct FakeModeView: View {
                     showBottomNav: $showBottomNav,
                     cameraSession: cameraManager.session,
                     isSessionRunning: cameraManager.isSessionRunning,
-                    onCapture: { takePhoto() }
+                    onCapture: { takePhoto() },
+                    showCaptureFlash: showCaptureFlash
                 )
-                
-                // 촬영 시각적 표시 (Recording Indicator - Apple Guideline 2.5.14)
-                if showCaptureFlash {
-                    Color.white
-                        .ignoresSafeArea()
-                        .allowsHitTesting(false)
-                }
                 
                 // 바텀 네비게이션 (스와이프 또는 프리뷰 탭으로 표시)
                 if showBottomNav {
@@ -332,6 +326,7 @@ struct PinchResizableCameraPreview: View {
     let cameraSession: AVCaptureSession
     let isSessionRunning: Bool
     let onCapture: () -> Void
+    var showCaptureFlash: Bool = false
     
     // 크기 제약
     private let minScale: CGFloat = 0.20  // 20%
@@ -367,6 +362,14 @@ struct PinchResizableCameraPreview: View {
             CameraPreview(session: cameraSession)
                 .frame(width: size.width, height: size.height)
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            
+            // 촬영 시각적 표시 (Recording Indicator - Apple Guideline 2.5.14)
+            if showCaptureFlash {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(Color.black)
+                    .frame(width: size.width, height: size.height)
+                    .allowsHitTesting(false)
+            }
             
             // 로딩 중일 때만 표시
             if !isSessionRunning {

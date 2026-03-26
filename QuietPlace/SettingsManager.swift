@@ -39,7 +39,7 @@ class SettingsManager: ObservableObject {
     
     private init() {
         // UserDefaults에서 저장된 값 불러오기 (기본값 30%)
-        let savedScale = UserDefaults.standard.object(forKey: "previewScale") as? CGFloat ?? 0.30
+        let savedScale = UserDefaults.standard.object(forKey: "previewScale") as? CGFloat ?? 0.80
         self.previewScale = min(max(savedScale, 0.20), 0.80)
         
         // 탭 촬영 기능 (기본값: 활성화)
