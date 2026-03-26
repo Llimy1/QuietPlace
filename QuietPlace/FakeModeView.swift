@@ -23,6 +23,7 @@ struct FakeModeView: View {
     @State private var isPreviewVisible = true
     @State private var isTakingPhoto = false
     @State private var gradientColors: [Color] = []
+    @State private var showCaptureFlash = false
     
     // Task 관리
     @State private var tapCount = 0
@@ -164,6 +165,13 @@ struct FakeModeView: View {
                     )
                 }
                 
+                // 촬영 시각적 표시 (Recording Indicator - Apple Guideline 2.5.14)
+                if showCaptureFlash {
+                    Color.white
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
+                
                 // 바텀 네비게이션 (스와이프 또는 프리뷰 탭으로 표시)
                 if showBottomNav {
                     Color.black.opacity(0.3)
@@ -293,6 +301,15 @@ struct FakeModeView: View {
                     if let _ = await photoDataManager.savePhotoAsync(capturedImage) {
                         let generator = UIImpactFeedbackGenerator(style: .medium)
                         generator.impactOccurred()
+                        
+                        // 촬영 시각적 표시 (Recording Indicator - Apple Guideline 2.5.14)
+                        withAnimation(.easeIn(duration: 0.05)) {
+                            showCaptureFlash = true
+                        }
+                        try? await Task.sleep(for: .seconds(0.15))
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            showCaptureFlash = false
+                        }
                     }
                 }
             } catch {

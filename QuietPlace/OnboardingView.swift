@@ -34,7 +34,7 @@ struct OnboardingView: View {
                     LockScreenPage()
                         .tag(1)
                     
-                    // 3페이지: 무음 촬영
+                    // 3페이지: 조용한 촬영
                     SilentCapturePage()
                         .tag(2)
                     
@@ -174,7 +174,7 @@ struct WelcomePage: View {
                 .padding(.top, 6)
 
             // 설명
-            Text("도서관, 강의실, 전시회에서\n볼륨 버튼으로 무음 촬영")
+            Text("도서관, 강의실, 전시회에서\n볼륨 버튼으로 조용한 촬영")
                 .font(.system(size: 16))
                 .foregroundColor(.white.opacity(0.6))
                 .multilineTextAlignment(.center)
@@ -311,7 +311,7 @@ struct LockScreenPage: View {
     }
 }
 
-// MARK: - Page 3: 무음 촬영
+// MARK: - Page 3: 조용한 촬영
 
 struct SilentCapturePage: View {
     @State private var showFlash = false
@@ -326,7 +326,7 @@ struct SilentCapturePage: View {
                     .font(.system(size: 28))
                     .foregroundColor(BrandPalette.accentCyan)
                 
-                Text("무음 촬영")
+                Text("조용한 촬영")
                     .font(.system(size: 32, weight: .bold))
                     .foregroundColor(.white)
             }
