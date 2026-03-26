@@ -20,7 +20,6 @@ struct FakeModeView: View {
     @State private var currentTime = Date()
     @State private var showBottomNav = false
     @State private var previewPosition: CGPoint?  // Optional로 변경
-    @State private var isPreviewVisible = true
     @State private var isTakingPhoto = false
     @State private var gradientColors: [Color] = []
     @State private var showCaptureFlash = false
@@ -61,19 +60,8 @@ struct FakeModeView: View {
         lastTapTime = now
         tapTask?.cancel()
         
-        // 3번 빠른 탭: 프리뷰 숨기기/보이기
-        if tapCount >= 3 {
-            withAnimation {
-                isPreviewVisible.toggle()
-            }
-            tapCount = 0
-            tapTask?.cancel()
-            tapTask = nil
-            return
-        }
-        
-        // 1번 탭: 촬영 (탭 촬영이 활성화되어 있고, 프리뷰가 보이는 경우)
-        if tapCount == 1 && settingsManager.tapToCapture && isPreviewVisible {
+        // 1번 탭: 촬영 (탭 촬영이 활성화되어 있는 경우)
+        if tapCount == 1 && settingsManager.tapToCapture {
             // 0.4초 대기 후 여전히 1번 탭이면 촬영
             tapTask = Task {
                 try? await Task.sleep(for: .seconds(0.4))
@@ -153,17 +141,15 @@ struct FakeModeView: View {
                 )
                 
                 // 🎥 Pinch로 크기 조절 가능한 카메라 프리뷰
-                if isPreviewVisible {
-                    PinchResizableCameraPreview(
-                        position: $previewPosition,
-                        defaultPosition: initialPreviewPosition,
-                        scale: $settingsManager.previewScale,  // Settings와 연동
-                        showBottomNav: $showBottomNav,
-                        cameraSession: cameraManager.session,
-                        isSessionRunning: cameraManager.isSessionRunning,
-                        onCapture: { takePhoto() }
-                    )
-                }
+                PinchResizableCameraPreview(
+                    position: $previewPosition,
+                    defaultPosition: initialPreviewPosition,
+                    scale: $settingsManager.previewScale,  // Settings와 연동
+                    showBottomNav: $showBottomNav,
+                    cameraSession: cameraManager.session,
+                    isSessionRunning: cameraManager.isSessionRunning,
+                    onCapture: { takePhoto() }
+                )
                 
                 // 촬영 시각적 표시 (Recording Indicator - Apple Guideline 2.5.14)
                 if showCaptureFlash {
