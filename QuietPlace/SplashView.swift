@@ -16,8 +16,8 @@ struct SplashView: View {
             // 배경색 - 앱 아이콘과 동일한 그라디언트
             LinearGradient(
                 colors: [
-                    Color(hex: "1A237E"), // Indigo 900
-                    Color(hex: "4A148C")  // Purple 900
+                    Color(red: 0.10, green: 0.36, blue: 0.24), // primaryGreen
+                    Color(red: 0.05, green: 0.08, blue: 0.06)  // dark background
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing

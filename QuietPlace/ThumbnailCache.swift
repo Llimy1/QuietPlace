@@ -17,10 +17,10 @@ class ThumbnailCache {
     nonisolated private let diskCacheDirectory: URL
     
     private init() {
-        // 메모리 캐시 설정 (50MB - reduced for better memory management)
-        memoryCache.totalCostLimit = 50 * 1024 * 1024
-        // 최대 100개 썸네일
-        memoryCache.countLimit = 100
+        // 메모리 캐시 설정 (100MB)
+        memoryCache.totalCostLimit = 100 * 1024 * 1024
+        // 최대 200개 썸네일
+        memoryCache.countLimit = 200
         
         // 디스크 캐시 디렉토리 설정
         let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -28,6 +28,17 @@ class ThumbnailCache {
         
         // 디스크 캐시 디렉토리 생성
         try? FileManager.default.createDirectory(at: diskCacheDirectory, withIntermediateDirectories: true)
+        
+        // 캐시 버전 체크 - 버전이 다르면 기존 캐시 삭제 (화질 개선 등 업데이트 시 갱신)
+        let cacheVersion = "v3"
+        let versionKey = "thumbnailCacheVersion"
+        if UserDefaults.standard.string(forKey: versionKey) != cacheVersion {
+            let dir = diskCacheDirectory
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            UserDefaults.standard.set(cacheVersion, forKey: versionKey)
+            debugPrint("✅ Thumbnail cache invalidated (version updated to \(cacheVersion))")
+        }
         
         // 메모리 경고 시 메모리 캐시 비우기
         NotificationCenter.default.addObserver(
@@ -83,63 +94,62 @@ class ThumbnailCache {
     
     // MARK: - Private Methods
     
-    /// 고성능 썸네일 생성 (ImageIO 사용, 알파 채널 없음) - nonisolated
+    /// 고화질 썸네일 생성 (CGContext 고품질 보간 사용) - nonisolated
     nonisolated private func generateThumbnail(from url: URL, size: CGSize) -> UIImage? {
+        // 1단계: ImageIO로 원본 이미지 로드 (EXIF orientation 반영)
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             return nil
         }
         
-        // 더 빠른 썸네일 생성을 위한 최적화된 옵션
-        let maxPixelSize = max(size.width, size.height)
-        
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-            kCGImageSourceShouldCache: false, // 캐싱하지 않음 (메모리 절약)
-            kCGImageSourceShouldAllowFloat: false // 정수 픽셀만 (빠름)
+        let sourceOptions: [CFString: Any] = [
+            kCGImageSourceShouldCache: false
         ]
-        
-        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options as CFDictionary) else {
+        guard let fullCGImage = CGImageSourceCreateImageAtIndex(imageSource, 0, sourceOptions as CFDictionary) else {
             return nil
         }
         
-        // 알파 채널이 있는지 확인하고 제거
-        let alphaInfo = cgImage.alphaInfo
+        // EXIF orientation 가져오기
+        let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any]
+        let orientationValue = properties?[kCGImagePropertyOrientation] as? UInt32 ?? 1
+        let cgOrientation = CGImagePropertyOrientation(rawValue: orientationValue) ?? .up
+        let uiOrientation = UIImage.Orientation(cgOrientation)
         
-        // 알파 채널이 있으면 RGB로 변환 (알파 제거)
-        if alphaInfo != .none && alphaInfo != .noneSkipFirst && alphaInfo != .noneSkipLast {
-            let width = cgImage.width
-            let height = cgImage.height
-            let colorSpace = CGColorSpaceCreateDeviceRGB()
-            
-            // bytesPerRow를 4의 배수로 정렬
-            let bytesPerRow = ((width * 4) + 3) & ~3
-            
-            guard let context = CGContext(
-                data: nil,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: bytesPerRow,
-                space: colorSpace,
-                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
-            ) else {
-                // Context 생성 실패 시 원본 반환
-                return UIImage(cgImage: cgImage, scale: 1.0, orientation: .up)
-            }
-            
-            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-            
-            guard let newCGImage = context.makeImage() else {
-                return UIImage(cgImage: cgImage, scale: 1.0, orientation: .up)
-            }
-            
-            return UIImage(cgImage: newCGImage, scale: 1.0, orientation: .up)
+        // 2단계: 원본 크기 기준으로 비율 유지 축소
+        let originalWidth = CGFloat(fullCGImage.width)
+        let originalHeight = CGFloat(fullCGImage.height)
+        let targetSize = max(size.width, size.height)
+        let scale = min(targetSize / originalWidth, targetSize / originalHeight)
+        
+        // 이미 작은 이미지면 그대로 반환
+        if scale >= 1.0 {
+            return UIImage(cgImage: fullCGImage, scale: 1.0, orientation: uiOrientation)
         }
         
-        // 알파 채널이 없으면 그대로 반환
-        return UIImage(cgImage: cgImage, scale: 1.0, orientation: .up)
+        let newWidth = Int(originalWidth * scale)
+        let newHeight = Int(originalHeight * scale)
+        
+        // 3단계: CGContext로 고품질 보간 다운샘플링
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: nil,
+            width: newWidth,
+            height: newHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ) else {
+            return UIImage(cgImage: fullCGImage, scale: 1.0, orientation: uiOrientation)
+        }
+        
+        context.interpolationQuality = .high
+        context.draw(fullCGImage, in: CGRect(x: 0, y: 0, width: newWidth, height: newHeight))
+        
+        guard let thumbnailCGImage = context.makeImage() else {
+            return UIImage(cgImage: fullCGImage, scale: 1.0, orientation: uiOrientation)
+        }
+        
+        return UIImage(cgImage: thumbnailCGImage, scale: 1.0, orientation: uiOrientation)
     }
     
     /// 비동기 썸네일 생성
@@ -284,5 +294,22 @@ class ThumbnailCache {
     
     deinit {
         NotificationCenter.default.removeObserver(self)
+    }
+}
+
+// MARK: - CGImagePropertyOrientation → UIImage.Orientation 변환
+
+private extension UIImage.Orientation {
+    init(_ cgOrientation: CGImagePropertyOrientation) {
+        switch cgOrientation {
+        case .up:            self = .up
+        case .upMirrored:    self = .upMirrored
+        case .down:          self = .down
+        case .downMirrored:  self = .downMirrored
+        case .left:          self = .left
+        case .leftMirrored:  self = .leftMirrored
+        case .right:         self = .right
+        case .rightMirrored: self = .rightMirrored
+        }
     }
 }

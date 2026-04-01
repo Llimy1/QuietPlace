@@ -9,9 +9,9 @@ import SwiftUI
 import Combine
 
 struct SettingsView: View {
-    @Binding var currentTab: ContentView.Tab
-    @Binding var previousTab: ContentView.Tab
+    @Environment(\.dismiss) private var dismiss
     @StateObject private var settingsManager = SettingsManager.shared
+    @ObservedObject private var cameraManager = CameraManager.shared
     @State private var showResetAlert = false
     @State private var cacheInfo: (memoryCount: Int, memoryLimit: String, diskCount: Int, diskSize: String)?
     @State private var showClearCacheAlert = false
@@ -33,68 +33,76 @@ struct SettingsView: View {
             // 메인 컨텐츠
             ScrollView {
                 VStack(spacing: 24) {
-                    // 프리뷰 크기 섹션
-                    SettingsSection(title: "프리뷰 크기") {
-                        VStack(spacing: 16) {
-                            // 크기 슬라이더
-                            VStack(alignment: .leading, spacing: 12) {
-                                HStack {
-                                    Text("프리뷰 크기")
+                    // 화면보호 모드 섹션
+                    SettingsSection(title: "화면보호 모드") {
+                        VStack(spacing: 0) {
+                            // 화면보호 모드 토글
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("화면보호 모드")
                                         .font(.system(size: 17, weight: .regular))
                                         .foregroundColor(.primary)
                                     
-                                    Spacer()
-                                    
-                                    Text("\(Int(settingsManager.previewScale * 100))%")
-                                        .font(.system(size: 17, weight: .semibold))
-                                        .foregroundColor(.blue)
-                                        .frame(minWidth: 50, alignment: .trailing)
+                                    Text("잠금화면 스타일로 화면을 보호합니다")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.secondary)
                                 }
-                                .padding(.horizontal, 16)
-                                .padding(.top, 12)
                                 
-                                // 슬라이더
-                                HStack(spacing: 12) {
-                                    Text("20%")
-                                        .font(.system(size: 13))
-                                        .foregroundColor(.secondary)
-                                    
-                                    Slider(
-                                        value: $settingsManager.previewScale,
-                                        in: 0.20...0.80,
-                                        step: 0.01
-                                    )
-                                    .tint(.blue)
-                                    
-                                    Text("80%")
-                                        .font(.system(size: 13))
-                                        .foregroundColor(.secondary)
-                                }
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, 12)
+                                Spacer()
+                                
+                                Toggle("", isOn: $settingsManager.isDisguiseMode)
+                                    .labelsHidden()
                             }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
                             
                             Divider()
                                 .padding(.leading, 16)
                             
-                            // 설명
+                            // 잠금화면 오버레이 불투명도 슬라이더
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("손가락으로 프리뷰를 확대/축소할 수도 있습니다")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.secondary)
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("잠금화면 어둡기")
+                                            .font(.system(size: 17, weight: .regular))
+                                            .foregroundColor(.primary)
+                                        
+                                        Text("화면 어둡기")
+                                            .font(.system(size: 13))
+                                            .foregroundColor(.secondary)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    Text("\(Int(settingsManager.disguiseOverlayOpacity * 100))%")
+                                        .font(.system(size: 17, weight: .medium))
+                                        .foregroundColor(.secondary)
+                                        .monospacedDigit()
+                                        .frame(width: 44, alignment: .trailing)
+                                }
                                 
-                                Text("60% 이상: 촬영 버튼 표시")
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.secondary)
+                                HStack(spacing: 8) {
+                                    Text("30%")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.secondary)
+                                    
+                                    Slider(
+                                        value: $settingsManager.disguiseOverlayOpacity,
+                                        in: 0.30...0.80
+                                    )
+                                    .accentColor(.white)
+                                    
+                                    Text("80%")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.secondary)
+                                }
                             }
                             .padding(.horizontal, 16)
-                            .padding(.bottom, 12)
-                        }
-                    }
-                    
-                    // 조용한 모드 섹션
-                    SettingsSection(title: "조용한 모드") {
-                        VStack(spacing: 0) {
+                            .padding(.vertical, 12)
+                            
+                            Divider()
+                                .padding(.leading, 16)
+                            
                             // 탭으로 촬영 토글
                             HStack {
                                 VStack(alignment: .leading, spacing: 4) {
@@ -102,7 +110,7 @@ struct SettingsView: View {
                                         .font(.system(size: 17, weight: .regular))
                                         .foregroundColor(.primary)
                                     
-                                    Text("통화 중 볼륨 버튼이 작동하지 않을 때 유용합니다")
+                                    Text("화면보호 모드에서 화면 탭으로 촬영합니다")
                                         .font(.system(size: 13))
                                         .foregroundColor(.secondary)
                                 }
@@ -114,19 +122,48 @@ struct SettingsView: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 12)
+                        }
+                    }
+                    
+                    // 카메라 섹션
+                    SettingsSection(title: "카메라") {
+                        VStack(spacing: 0) {
+                            SettingsRow(
+                                title: "최대 해상도",
+                                value: cameraManager.currentResolutionLabel,
+                                showArrow: false
+                            )
                             
                             Divider()
                                 .padding(.leading, 16)
                             
-                            // 배경 설명
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("배경")
-                                    .font(.system(size: 15, weight: .regular))
-                                    .foregroundColor(.secondary)
+                            SettingsRow(
+                                title: "사진 포맷",
+                                value: "HEIC",
+                                showArrow: false
+                            )
+                            
+                            Divider()
+                                .padding(.leading, 16)
+                            
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("손떨림 방지")
+                                        .font(.system(size: 17, weight: .regular))
+                                        .foregroundColor(.primary)
+                                    
+                                    Text("촬영 시 흔들림을 보정합니다")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.secondary)
+                                }
                                 
-                                Text("잠금화면 배경은 자동으로 랜덤 그라디언트가 적용됩니다.")
-                                    .font(.system(size: 14, weight: .regular))
-                                    .foregroundColor(.secondary)
+                                Spacer()
+                                
+                                Toggle("", isOn: $settingsManager.isStabilizationEnabled)
+                                    .labelsHidden()
+                                    .onChange(of: settingsManager.isStabilizationEnabled) { _, enabled in
+                                        CameraManager.shared.updateStabilization(enabled: enabled)
+                                    }
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 12)
@@ -243,13 +280,10 @@ struct SettingsView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 20)
-                .padding(.bottom, 130) // 바텀 바 + 배너 광고 공간 확보
+                .padding(.bottom, 80) // 배너 광고 공간 확보
             }
             
-            // 고정 바텀 네비게이션 바
-            SettingsBottomNavigationBar(currentTab: $currentTab, previousTab: $previousTab)
-            
-            // 하단 배너 광고 (네비게이션 바 아래)
+            // 하단 배너 광고
             BannerAdView()
                 .frame(height: AppConstants.Ads.bannerHeight)
                 .background(Color(red: 0.11, green: 0.11, blue: 0.12))
@@ -260,7 +294,7 @@ struct SettingsView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 Button(action: {
-                    currentTab = previousTab
+                    dismiss()
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
@@ -442,45 +476,8 @@ struct CacheInfoRow: View {
     }
 }
 
-// Settings 바텀 네비게이션 바
-struct SettingsBottomNavigationBar: View {
-    @Binding var currentTab: ContentView.Tab
-    @Binding var previousTab: ContentView.Tab
-    
-    var body: some View {
-        HStack(spacing: 0) {
-            BottomNavButton(
-                icon: "moon.fill",
-                title: "조용한 모드"
-            ) {
-                previousTab = currentTab
-                currentTab = .fakeMode
-            }
-            
-            BottomNavButton(
-                icon: "photo.fill",
-                title: "갤러리"
-            ) {
-                previousTab = currentTab
-                currentTab = .gallery
-            }
-            
-            BottomNavButton(
-                icon: "gearshape.fill",
-                title: "설정",
-                isActive: true
-            ) {
-                // 이미 설정에 있음
-            }
-        }
-        .frame(height: 70)
-        .background(
-            Color(red: 0.11, green: 0.11, blue: 0.12)
-                .ignoresSafeArea(edges: .bottom)
-        )
-    }
-}
-
 #Preview {
-    SettingsView(currentTab: .constant(.settings), previousTab: .constant(.fakeMode))
+    NavigationStack {
+        SettingsView()
+    }
 }

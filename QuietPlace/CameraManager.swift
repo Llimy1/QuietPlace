@@ -19,6 +19,9 @@ class CameraManager: NSObject, ObservableObject {
     @Published var isSessionRunning = false
     @Published var errorMessage: String?
     @Published var showError: Bool = false
+    @Published var isFlashOn = false
+    @Published var isUsingFrontCamera = false
+    @Published var currentResolutionLabel = "-"
     
     // Camera session
     let session = AVCaptureSession()
@@ -32,6 +35,7 @@ class CameraManager: NSObject, ObservableObject {
     nonisolated(unsafe) private let captureLock = NSLock()
     nonisolated(unsafe) private var _isCapturingPhoto = false
     nonisolated(unsafe) private var _isFrameReady = false
+    nonisolated(unsafe) private var _isFrontCamera = false
     
     // ⚡️ 재사용 가능한 CIContext (성능 최적화 - 미리 초기화)
     nonisolated(unsafe) private let ciContext: CIContext = {
@@ -105,16 +109,19 @@ class CameraManager: NSObject, ObservableObject {
                 
                 self.session.beginConfiguration()
                 
-                // ⚡️ 4K 해상도 설정 (지원하는 기기에서)
-                if self.session.canSetSessionPreset(.hd4K3840x2160) {
-                    self.session.sessionPreset = .hd4K3840x2160
-                    debugPrint("📸 Using 4K resolution (3840x2160)")
-                } else if self.session.canSetSessionPreset(.hd1920x1080) {
+                // Full HD 해상도 설정
+                let resolutionLabel: String
+                if self.session.canSetSessionPreset(.hd1920x1080) {
                     self.session.sessionPreset = .hd1920x1080
+                    resolutionLabel = "Full HD (1920×1080)"
                     debugPrint("📸 Using Full HD resolution (1920x1080)")
                 } else {
                     self.session.sessionPreset = .photo
+                    resolutionLabel = "표준 (Photo)"
                     debugPrint("📸 Using photo preset")
+                }
+                Task { @MainActor in
+                    self.currentResolutionLabel = resolutionLabel
                 }
                 
                 do {
@@ -134,14 +141,21 @@ class CameraManager: NSObject, ObservableObject {
                     if self.session.canAddOutput(self.videoOutput) {
                         self.session.addOutput(self.videoOutput)
                         
-                        // ⚡️ 최대 해상도 설정 (4K 지원 기기는 3840x2160, 그 외는 1920x1080)
-                        // 해상도를 명시하지 않으면 AVCaptureSession이 자동으로 적절한 해상도 선택
                         self.videoOutput.videoSettings = [
                             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
                         ]
                         
                         self.videoOutput.alwaysDiscardsLateVideoFrames = false
                         self.videoOutput.setSampleBufferDelegate(self, queue: self.outputQueue)
+                        
+                        // 손떨림 방지 (Video Stabilization) - 설정값 반영
+                        if let connection = self.videoOutput.connection(with: .video) {
+                            if connection.isVideoStabilizationSupported {
+                                let enabled = SettingsManager.shared.isStabilizationEnabled
+                                connection.preferredVideoStabilizationMode = enabled ? .cinematic : .off
+                                debugPrint("✅ Video stabilization: \(enabled ? "cinematic" : "off")")
+                            }
+                        }
                     }
                     
                     // 자동 초점/노출 설정
@@ -191,6 +205,66 @@ class CameraManager: NSObject, ObservableObject {
         debugPrint("✅ CIContext warmed up in \(String(format: "%.3f", elapsed))s")
     }
     
+    // MARK: - Flash Control
+    
+    func toggleFlash() {
+        sessionQueue.async { [weak self] in
+            guard let self = self,
+                  let device = self.videoDeviceInput?.device,
+                  device.hasTorch else { return }
+            
+            do {
+                try device.lockForConfiguration()
+                device.torchMode = device.torchMode == .on ? .off : .on
+                device.unlockForConfiguration()
+                
+                Task { @MainActor in
+                    self.isFlashOn = (device.torchMode == .on)
+                }
+            } catch {
+                debugPrint("❌ Flash toggle failed: \(error)")
+            }
+        }
+    }
+    
+    // MARK: - Camera Switch
+    
+    func switchCamera() {
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            let currentPosition = self.videoDeviceInput?.device.position ?? .back
+            let newPosition: AVCaptureDevice.Position = currentPosition == .back ? .front : .back
+            
+            guard let newDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition) else { return }
+            
+            do {
+                let newInput = try AVCaptureDeviceInput(device: newDevice)
+                
+                self.session.beginConfiguration()
+                
+                if let currentInput = self.videoDeviceInput {
+                    self.session.removeInput(currentInput)
+                }
+                
+                if self.session.canAddInput(newInput) {
+                    self.session.addInput(newInput)
+                    self.videoDeviceInput = newInput
+                }
+                
+                self.session.commitConfiguration()
+                
+                self._isFrontCamera = (newPosition == .front)
+                Task { @MainActor in
+                    self.isUsingFrontCamera = (newPosition == .front)
+                    self.isFlashOn = false
+                }
+            } catch {
+                debugPrint("❌ Camera switch failed: \(error)")
+            }
+        }
+    }
+    
     // MARK: - Session Control
     
     func startSession() {
@@ -222,6 +296,75 @@ class CameraManager: NSObject, ObservableObject {
                 Task { @MainActor in
                     self.isSessionRunning = false
                 }
+            }
+        }
+    }
+    
+    // MARK: - Stabilization Control
+    
+    func updateStabilization(enabled: Bool) {
+        sessionQueue.async { [weak self] in
+            guard let self = self,
+                  let connection = self.videoOutput.connection(with: .video) else { return }
+            
+            if connection.isVideoStabilizationSupported {
+                connection.preferredVideoStabilizationMode = enabled ? .cinematic : .off
+                debugPrint("✅ Video stabilization updated: \(enabled ? "cinematic" : "off")")
+            }
+        }
+    }
+    
+    // MARK: - Focus Control
+    
+    /// 특정 지점에 초점 맞추기 (탭 포커스)
+    func focusAt(point: CGPoint, viewSize: CGSize) {
+        sessionQueue.async { [weak self] in
+            guard let self = self,
+                  let device = self.videoDeviceInput?.device else { return }
+            
+            // 화면 좌표 → 카메라 좌표 변환 (0.0 ~ 1.0)
+            let focusPoint = CGPoint(
+                x: point.y / viewSize.height,
+                y: 1.0 - point.x / viewSize.width
+            )
+            
+            do {
+                try device.lockForConfiguration()
+                
+                // 탭한 지점에 초점
+                if device.isFocusPointOfInterestSupported && device.isFocusModeSupported(.autoFocus) {
+                    device.focusPointOfInterest = focusPoint
+                    device.focusMode = .autoFocus
+                }
+                
+                // 탭한 지점에 노출
+                if device.isExposurePointOfInterestSupported && device.isExposureModeSupported(.autoExpose) {
+                    device.exposurePointOfInterest = focusPoint
+                    device.exposureMode = .autoExpose
+                }
+                
+                device.unlockForConfiguration()
+                
+                // 초점 고정 후 연속 자동 초점으로 복귀 (3초 후)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    self.sessionQueue.async {
+                        guard let device = self.videoDeviceInput?.device else { return }
+                        do {
+                            try device.lockForConfiguration()
+                            if device.isFocusModeSupported(.continuousAutoFocus) {
+                                device.focusMode = .continuousAutoFocus
+                            }
+                            if device.isExposureModeSupported(.continuousAutoExposure) {
+                                device.exposureMode = .continuousAutoExposure
+                            }
+                            device.unlockForConfiguration()
+                        } catch {
+                            debugPrint("❌ Focus restore failed: \(error)")
+                        }
+                    }
+                }
+            } catch {
+                debugPrint("❌ Focus failed: \(error)")
             }
         }
     }
@@ -324,8 +467,9 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         let processingElapsed = CFAbsoluteTimeGetCurrent() - frameProcessStartTime
         debugPrint("🎬 Frame processed in \(String(format: "%.3f", processingElapsed))s")
         
-        // UIImage 생성
-        let image = UIImage(cgImage: cgImage, scale: 1.0, orientation: .right)
+        // UIImage 생성 (전면 카메라는 좌우 반전 보정)
+        let orientation: UIImage.Orientation = _isFrontCamera ? .leftMirrored : .right
+        let image = UIImage(cgImage: cgImage, scale: 1.0, orientation: orientation)
         
         // ⚡️ lock으로 안전하게 continuation resume (MainActor 오버헤드 제거)
         captureLock.lock()

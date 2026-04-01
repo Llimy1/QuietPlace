@@ -10,21 +10,27 @@ import SwiftUI
 // MARK: - 브랜드 컬러
 
 struct BrandPalette {
-    static let primaryBlue = Color(red: 0.2, green: 0.5, blue: 1.0)
-    static let secondaryPurple = Color(red: 0.6, green: 0.3, blue: 0.9)
-    static let accentCyan = Color(red: 0.3, green: 0.8, blue: 1.0)
+    // 아이콘 기반 컬러: 진한 초록 + 핑크/코랄
+    static let primaryGreen = Color(red: 0.10, green: 0.36, blue: 0.24)   // 진한 초록
+    static let secondaryPink = Color(red: 0.91, green: 0.44, blue: 0.44)  // 코랄 핑크
+    static let accentMint = Color(red: 0.40, green: 0.75, blue: 0.55)     // 밝은 민트
     
-    static let darkBackground = Color(red: 0.05, green: 0.05, blue: 0.06)
+    // 하위 호환용 alias
+    static let primaryBlue = primaryGreen
+    static let secondaryPurple = secondaryPink
+    static let accentCyan = accentMint
+    
+    static let darkBackground = Color(red: 0.05, green: 0.08, blue: 0.06)
     static let lightBackground = Color.white
     
     static let gradientLight = LinearGradient(
-        colors: [primaryBlue, secondaryPurple],
+        colors: [primaryGreen, secondaryPink],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
     
     static let gradientDark = LinearGradient(
-        colors: [primaryBlue.opacity(0.8), secondaryPurple.opacity(0.8)],
+        colors: [primaryGreen.opacity(0.8), secondaryPink.opacity(0.8)],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )

@@ -96,8 +96,12 @@ class PhotoDataManager: ObservableObject {
                 try data.write(to: fileURL)
                 debugPrint("✅ Photo saved: \(fileName)")
                 
-                // 4️⃣ 썸네일 미리 생성 (백그라운드에서)
-                await ThumbnailCache.shared.getThumbnailAsync(for: photoItem)
+                // 4️⃣ 썸네일 미리 생성 (갤러리와 동일한 Retina 크기로)
+                let screenScale = await MainActor.run { UIScreen.main.scale }
+                let screenWidth = await MainActor.run { UIScreen.main.bounds.width }
+                let thumbnailPx = (screenWidth / 3) * screenScale
+                let thumbnailSize = CGSize(width: thumbnailPx, height: thumbnailPx)
+                await ThumbnailCache.shared.getThumbnailAsync(for: photoItem, size: thumbnailSize)
                 
             } catch {
                 debugPrint("❌ Failed to save photo: \(error)")

@@ -36,7 +36,7 @@ struct TermsOfServiceView: View {
                         .padding(.top, 12)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(red: 0.11, green: 0.11, blue: 0.12))
+                .background(Color(red: 0.05, green: 0.08, blue: 0.06))
             }
             
             // 에러 화면
@@ -62,13 +62,13 @@ struct TermsOfServiceView: View {
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(.white)
                             .frame(width: 120, height: 44)
-                            .background(Color.blue)
+                            .background(Color(red: 0.10, green: 0.36, blue: 0.24))
                             .cornerRadius(12)
                     }
                     .padding(.top, 12)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(red: 0.11, green: 0.11, blue: 0.12))
+                .background(Color(red: 0.05, green: 0.08, blue: 0.06))
             }
         }
         .navigationTitle("이용약관")

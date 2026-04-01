@@ -9,8 +9,7 @@ import SwiftUI
 import Combine
 
 struct GalleryView: View {
-    @Binding var currentTab: ContentView.Tab
-    @Binding var previousTab: ContentView.Tab
+    @Environment(\.dismiss) private var dismiss
     @StateObject private var photoDataManager = PhotoDataManager.shared
     @State private var isSelectionMode = false
     @State private var selectedPhotos: Set<String> = []  // PhotoItem ID로 변경
@@ -83,14 +82,11 @@ struct GalleryView: View {
                             }
                         }
                         .padding(.top, 20)
-                        .padding(.bottom, 130) // 바텀 바 + 배너 광고 공간 확보
+                        .padding(.bottom, 80) // 배너 광고 공간 확보
                     }
                 }
                 
-                // 고정 바텀 네비게이션 바 (항상 표시)
-                GalleryBottomNavigationBar(currentTab: $currentTab, previousTab: $previousTab)
-                
-                // 하단 배너 광고 (네비게이션 바 아래)
+                // 하단 배너 광고
                 BannerAdView()
                     .frame(height: AppConstants.Ads.bannerHeight)
                     .background(Color(red: 0.11, green: 0.11, blue: 0.12))
@@ -106,10 +102,12 @@ struct GalleryView: View {
                         onDelete: deleteSelectedPhotos,
                         onDownload: downloadSelectedPhotos
                     )
-                    .padding(.bottom, 120) // 바텀 바 + 배너 광고 위에 표시
+                    .padding(.bottom, 70) // 배너 광고 위에 표시
                 }
             }
         }
+            .navigationTitle("갤러리")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     if isSelectionMode {
@@ -121,7 +119,7 @@ struct GalleryView: View {
                         }
                     } else {
                         Button(action: {
-                            currentTab = previousTab
+                            dismiss()
                         }) {
                             HStack(spacing: 4) {
                                 Image(systemName: "chevron.left")
@@ -176,7 +174,8 @@ struct GalleryView: View {
                 }
             }
             .onDisappear {
-                Task {
+                // dismiss 애니메이션 완료 후 캐시 정리 (UI 버벅거림 방지)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     ThumbnailCache.shared.memoryCache.removeAllObjects()
                 }
             }
@@ -257,66 +256,6 @@ struct GalleryView: View {
             showDownloadAlert = true
             selectedPhotos.removeAll()
             isSelectionMode = false
-        }
-    }
-}
-
-// 고정 바텀 네비게이션 바
-struct GalleryBottomNavigationBar: View {
-    @Binding var currentTab: ContentView.Tab
-    @Binding var previousTab: ContentView.Tab
-    
-    var body: some View {
-        HStack(spacing: 0) {
-            BottomNavButton(
-                icon: "moon.fill",
-                title: "조용한 모드"
-            ) {
-                previousTab = currentTab
-                currentTab = .fakeMode
-            }
-            
-            BottomNavButton(
-                icon: "photo.fill",
-                title: "갤러리",
-                isActive: true
-            ) {
-                // 이미 갤러리에 있음
-            }
-            
-            BottomNavButton(
-                icon: "gearshape.fill",
-                title: "설정"
-            ) {
-                previousTab = currentTab
-                currentTab = .settings
-            }
-        }
-        .frame(height: 70)
-        .background(
-            Color(red: 0.11, green: 0.11, blue: 0.12)
-                .ignoresSafeArea(edges: .bottom)
-        )
-    }
-}
-
-// 바텀 네비게이션 버튼
-struct BottomNavButton: View {
-    let icon: String
-    let title: String
-    var isActive: Bool = false
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 24))
-                Text(title)
-                    .font(.system(size: 11))
-            }
-            .foregroundColor(isActive ? .blue : .gray)
-            .frame(maxWidth: .infinity)
         }
     }
 }
@@ -438,79 +377,95 @@ struct PhotoThumbnail: View {
     @State private var thumbnail: UIImage?
     @State private var isLoading = true
     
+    private var cellSize: CGFloat {
+        (UIScreen.main.bounds.width - 4) / 3  // spacing 2 × 2 = 4
+    }
+    
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                // 실제 사진 썸네일
-                if let thumbnailImage = thumbnail {
-                    Image(uiImage: thumbnailImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: geometry.size.width, height: geometry.size.width)
-                        .clipped()
-                } else if isLoading {
-                    // 로딩 중
-                    Rectangle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.gray.opacity(0.15), Color.gray.opacity(0.25)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
+        ZStack {
+            // 실제 사진 썸네일
+            if let thumbnailImage = thumbnail {
+                Image(uiImage: thumbnailImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: cellSize, height: cellSize)
+                    .clipped()
+            } else if isLoading {
+                // 로딩 중
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.gray.opacity(0.15), Color.gray.opacity(0.25)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
                         )
-                } else {
-                    // 이미지 로드 실패
+                    )
+                    .frame(width: cellSize, height: cellSize)
+            } else {
+                // 이미지 로드 실패
+                ZStack {
                     Rectangle()
                         .fill(Color.gray.opacity(0.3))
-                    
                     Image(systemName: "photo")
                         .font(.system(size: 24))
                         .foregroundColor(.gray)
                 }
-                
-                // 선택 오버레이
-                if isSelectionMode {
-                    Color.blue.opacity(isSelected ? 0.3 : 0)
-                    
-                    VStack {
-                        HStack {
-                            Spacer()
-                            
-                            ZStack {
-                                Circle()
-                                    .fill(isSelected ? Color.blue : Color.white.opacity(0.3))
-                                    .frame(width: 24, height: 24)
-                                
-                                if isSelected {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 12, weight: .bold))
-                                        .foregroundColor(.white)
-                                }
-                            }
-                            .padding(8)
-                        }
-                        
-                        Spacer()
-                    }
-                }
+                .frame(width: cellSize, height: cellSize)
             }
-            .frame(width: geometry.size.width, height: geometry.size.width)
-            .onAppear {
-                loadThumbnail()
+            
+            // 선택 오버레이
+            if isSelectionMode {
+                Color.blue.opacity(isSelected ? 0.3 : 0)
+                    .frame(width: cellSize, height: cellSize)
+                
+                VStack {
+                    HStack {
+                        Spacer()
+                        
+                        ZStack {
+                            Circle()
+                                .fill(isSelected ? Color.blue : Color.white.opacity(0.3))
+                                .frame(width: 24, height: 24)
+                            
+                            if isSelected {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        .padding(8)
+                    }
+                    
+                    Spacer()
+                }
+                .frame(width: cellSize, height: cellSize)
             }
         }
-        .aspectRatio(1, contentMode: .fit)
+        .frame(width: cellSize, height: cellSize)
+        .contentShape(Rectangle())
+        .onAppear {
+            loadThumbnail()
+        }
     }
     
     private func loadThumbnail() {
-        // 썸네일 크기 설정
-        let screenWidth = UIScreen.main.bounds.width
-        let thumbnailSize = screenWidth / 3
-        let size = CGSize(width: thumbnailSize, height: thumbnailSize)
+        // 이미 로드됨
+        guard thumbnail == nil else { return }
         
-        // 동기로 로드 (경량화 전 방식)
-        thumbnail = photo.getThumbnail(size: size)
-        isLoading = false
+        let screenWidth = UIScreen.main.bounds.width
+        let scale = UIScreen.main.scale
+        let thumbnailSize = (screenWidth / 3) * scale  // Retina 픽셀 크기로 요청
+        let size = CGSize(width: thumbnailSize, height: thumbnailSize)
+        let photoItem = photo
+        
+        // 백그라운드에서 썸네일 로드 (메인 스레드 블로킹 방지)
+        Task.detached(priority: .userInitiated) {
+            let image = photoItem.getThumbnail(size: size)
+            await MainActor.run {
+                thumbnail = image
+                isLoading = false
+            }
+        }
     }
 }
 
@@ -567,8 +522,6 @@ struct PhotoFullscreenView: View {
     let photos: [PhotoItem]
     @Binding var currentIndex: Int
     @Binding var isPresented: Bool
-    @State private var scale: CGFloat = 1.0
-    @State private var lastScale: CGFloat = 1.0
     @State private var showDeleteAlert = false
     @State private var isDownloading = false
     @State private var showDownloadAlert = false
@@ -587,7 +540,6 @@ struct PhotoFullscreenView: View {
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
                         } else {
-                            // 이미지 로드 실패
                             VStack(spacing: 20) {
                                 Image(systemName: "exclamationmark.triangle")
                                     .font(.system(size: 48))
@@ -598,39 +550,13 @@ struct PhotoFullscreenView: View {
                             }
                         }
                     }
-                    .scaleEffect(scale)
-                    .gesture(
-                        MagnificationGesture()
-                            .onChanged { value in
-                                scale = lastScale * value
-                            }
-                            .onEnded { _ in
-                                lastScale = scale
-                                if scale < 1.0 {
-                                    withAnimation {
-                                        scale = 1.0
-                                        lastScale = 1.0
-                                    }
-                                }
-                            }
-                    )
-                    .onTapGesture(count: 2) {
-                        withAnimation {
-                            if scale > 1.0 {
-                                scale = 1.0
-                                lastScale = 1.0
-                            } else {
-                                scale = 2.0
-                                lastScale = 2.0
-                            }
-                        }
-                    }
                     .tag(index)
                 }
             }
             #if os(iOS)
             .tabViewStyle(.page(indexDisplayMode: .never))
             #endif
+
             
             // 상단 UI
             VStack {
@@ -760,5 +686,7 @@ struct ActionButton: View {
 }
 
 #Preview {
-    GalleryView(currentTab: .constant(.gallery), previousTab: .constant(.fakeMode))
+    NavigationStack {
+        GalleryView()
+    }
 }

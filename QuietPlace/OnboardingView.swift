@@ -20,7 +20,7 @@ struct OnboardingView: View {
     var body: some View {
         ZStack {
             // 배경
-            Color(red: 0.05, green: 0.05, blue: 0.06)
+            Color(red: 0.05, green: 0.08, blue: 0.06)
                 .ignoresSafeArea()
             
             VStack(spacing: 0) {
@@ -30,7 +30,7 @@ struct OnboardingView: View {
                     WelcomePage()
                         .tag(0)
                     
-                    // 2페이지: 조용한 모드
+                    // 2페이지: 화면보호 모드
                     LockScreenPage()
                         .tag(1)
                     
@@ -42,8 +42,8 @@ struct OnboardingView: View {
                     CaptureNotesPage()
                         .tag(3)
                     
-                    // 5페이지: 프리뷰 조절
-                    PreviewResizePage()
+                    // 5페이지: 카메라 기능
+                    CameraFeaturesPage()
                         .tag(4)
                     
                     // 6페이지: 갤러리
@@ -69,7 +69,7 @@ struct OnboardingView: View {
                     HStack(spacing: 8) {
                         ForEach(0..<totalPages, id: \.self) { index in
                             Circle()
-                                .fill(currentPage == index ? Color.blue : Color.white.opacity(0.3))
+                                .fill(currentPage == index ? BrandPalette.accentMint : Color.white.opacity(0.3))
                                 .frame(width: 8, height: 8)
                         }
                     }
@@ -93,7 +93,7 @@ struct OnboardingView: View {
                             .padding(.vertical, 16)
                             .background(
                                 LinearGradient(
-                                    colors: [Color.blue, Color.blue.opacity(0.8)],
+                                    colors: [BrandPalette.primaryGreen, BrandPalette.accentMint],
                                     startPoint: .leading,
                                     endPoint: .trailing
                                 )
@@ -186,10 +186,10 @@ struct WelcomePage: View {
     }
 }
 
-// MARK: - Page 2: 조용한 모드
+// MARK: - Page 2: 화면보호 모드
 
 struct LockScreenPage: View {
-    @State private var currentTime = Date()
+    @State private var isDisguised = false
     
     var body: some View {
         VStack(spacing: 30) {
@@ -197,19 +197,18 @@ struct LockScreenPage: View {
             
             // 타이틀
             HStack(spacing: 8) {
-                Image(systemName: "moon.fill")
+                Image(systemName: "eye.slash.fill")
                     .font(.system(size: 24))
                     .foregroundColor(BrandPalette.primaryBlue)
                 
-                Text("조용한 모드")
+                Text("화면보호 모드")
                     .font(.system(size: 28, weight: .bold))
                     .foregroundColor(.white)
             }
             .padding(.bottom, 10)
             
-            // 간단한 잠금화면 일러스트 + 프리뷰
+            // 모드 전환 일러스트
             ZStack {
-                // 폰 배경
                 RoundedRectangle(cornerRadius: 40)
                     .fill(Color.black)
                     .frame(width: 180, height: 320)
@@ -226,56 +225,68 @@ struct LockScreenPage: View {
                     )
                     .shadow(color: .black.opacity(0.4), radius: 25, x: 0, y: 12)
                 
-                // 잠금화면 내용
-                VStack(spacing: 0) {
-                    // 시간
-                    Text(timeString)
-                        .font(.system(size: 44, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(.top, 35)
-                    
-                    // 날짜
-                    Text(dateString)
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.7))
-                        .padding(.top, 4)
-                    
-                    Spacer()
-                    
-                    // 하단 카메라 프리뷰 (작은 크기)
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 7)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.blue.opacity(0.3), Color.purple.opacity(0.3)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .frame(width: 70, height: 52)
+                if isDisguised {
+                    // 잠금화면 모습
+                    VStack(spacing: 0) {
+                        Text("12:34")
+                            .font(.system(size: 44, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.top, 50)
                         
-                        Image(systemName: "camera.fill")
-                            .font(.system(size: 20))
+                        Text("3월 30일 일요일")
+                            .font(.system(size: 11))
                             .foregroundColor(.white.opacity(0.7))
+                            .padding(.top, 4)
+                        
+                        Spacer()
                     }
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7)
-                            .stroke(Color.white.opacity(0.3), lineWidth: 1.5)
+                    .frame(width: 180, height: 320)
+                    .background(
+                        LinearGradient(
+                            colors: [BrandPalette.primaryGreen.opacity(0.3), BrandPalette.secondaryPink.opacity(0.5)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                    .padding(.bottom, 18)
+                    .clipShape(RoundedRectangle(cornerRadius: 40))
+                } else {
+                    // 카메라 모습
+                    VStack {
+                        Spacer()
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 50))
+                            .foregroundColor(.white.opacity(0.5))
+                        
+                        // 촬영 버튼
+                        Circle()
+                            .stroke(Color.white, lineWidth: 3)
+                            .frame(width: 50, height: 50)
+                            .overlay(
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 40, height: 40)
+                            )
+                            .padding(.top, 20)
+                        Spacer()
+                    }
+                    .frame(width: 180, height: 320)
                 }
-                .frame(width: 180, height: 320)
+            }
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.5)) {
+                    isDisguised.toggle()
+                }
             }
             
             // 설명
             VStack(spacing: 10) {
-                Text("깔끔한 인터페이스로")
+                Text("버튼 하나로 잠금화면 스타일 화면 보호")
                     .font(.system(size: 16))
                     .foregroundColor(.white.opacity(0.8))
                 
-                Text("하단에 작은 프리뷰 제공")
-                    .font(.system(size: 16))
-                    .foregroundColor(.white.opacity(0.8))
+                Text("탭하여 전환해보세요")
+                    .font(.system(size: 14))
+                    .foregroundColor(BrandPalette.accentMint)
             }
             .multilineTextAlignment(.center)
             
@@ -292,22 +303,6 @@ struct LockScreenPage: View {
             
             Spacer()
         }
-        .onAppear {
-            currentTime = Date()
-        }
-    }
-    
-    private var timeString: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: currentTime)
-    }
-    
-    private var dateString: String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ko_KR")
-        formatter.dateFormat = "M월 d일 EEEE"
-        return formatter.string(from: currentTime)
     }
 }
 
@@ -457,7 +452,7 @@ struct CaptureNotesPage: View {
                     Circle()
                         .fill(
                             LinearGradient(
-                                colors: [Color.blue.opacity(0.3), Color.cyan.opacity(0.3)],
+                                colors: [BrandPalette.primaryGreen.opacity(0.3), BrandPalette.accentMint.opacity(0.3)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
@@ -466,7 +461,7 @@ struct CaptureNotesPage: View {
                     
                     Image(systemName: "info.circle.fill")
                         .font(.system(size: 40))
-                        .foregroundColor(.blue)
+                        .foregroundColor(BrandPalette.accentMint)
                 }
                 
                 // 타이틀
@@ -495,7 +490,7 @@ struct CaptureNotesPage: View {
                         // 화면 탭
                         CompactNoticeCard(
                             icon: "hand.tap.fill",
-                            iconColor: .blue,
+                            iconColor: BrandPalette.accentMint,
                             title: "화면 탭",
                             description: "통화 중 유용"
                         )
@@ -552,98 +547,81 @@ struct CaptureNotesPage: View {
     }
 }
 
-// MARK: - Page 5: 프리뷰 조절
+// MARK: - Page 5: 카메라 기능
 
-struct PreviewResizePage: View {
-    @State private var scale: CGFloat = 0.3
-    @State private var timer: Timer?
-    
+struct CameraFeaturesPage: View {
     var body: some View {
-        VStack(spacing: 40) {
-            Spacer()
-            
-            // 프리뷰 크기 조절 애니메이션
-            ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.blue.opacity(0.3), Color.purple.opacity(0.3)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 20) {
+                Spacer()
+                    .frame(height: 80)
+                
+                // 아이콘
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [BrandPalette.primaryGreen.opacity(0.3), BrandPalette.accentMint.opacity(0.3)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
-                    )
-                    .frame(width: 300 * scale, height: 225 * scale)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.white.opacity(0.5), lineWidth: 2)
-                    )
-                    .animation(.spring(response: 0.5), value: scale)
+                        .frame(width: 80, height: 80)
+                    
+                    Image(systemName: "camera.fill")
+                        .font(.system(size: 40))
+                        .foregroundColor(BrandPalette.accentMint)
+                }
                 
-                Image(systemName: "camera.fill")
-                    .font(.system(size: 30 * scale))
-                    .foregroundColor(.white.opacity(0.7))
-            }
-            
-            // 핀치 제스처 아이콘
-            HStack(spacing: 12) {
-                Image(systemName: "arrow.left.and.right")
-                    .font(.system(size: 24))
-                    .foregroundColor(.blue)
+                // 타이틀
+                Text("카메라 기능")
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundColor(.white)
                 
-                Text("두 손가락으로 확대/축소")
-                    .font(.system(size: 16))
+                // 설명
+                Text("간편한 카메라 인터페이스")
+                    .font(.system(size: 15))
                     .foregroundColor(.white.opacity(0.7))
-            }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 20)
-            .background(Color.white.opacity(0.1))
-            .cornerRadius(12)
-            
-            // 타이틀
-            Text("📐 크기 조절")
-                .font(.system(size: 32, weight: .bold))
-                .foregroundColor(.white)
-            
-            // 설명
-            VStack(spacing: 12) {
-                Text("두 손가락으로 프리뷰를")
-                Text("확대/축소할 수 있어요")
-                Text("원하는 크기로 조절하세요")
-            }
-            .font(.system(size: 17))
-            .foregroundColor(.white.opacity(0.7))
-            .multilineTextAlignment(.center)
-            
-            // 팁
-            HStack(spacing: 8) {
-                Image(systemName: "info.circle.fill")
-                    .foregroundColor(.blue)
-                Text("20% ~ 80% 범위로 조절 가능")
-                    .font(.system(size: 14))
-                    .foregroundColor(.white.opacity(0.6))
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .background(Color.white.opacity(0.1))
-            .cornerRadius(12)
-            
-            Spacer()
-        }
-        .onAppear {
-            // 자동 애니메이션 시작
-            startAnimation()
-        }
-        .onDisappear {
-            // 타이머 정리
-            timer?.invalidate()
-            timer = nil
-        }
-    }
-    
-    private func startAnimation() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
-            withAnimation(.spring(response: 0.5)) {
-                scale = scale == 0.3 ? 0.6 : 0.3
+                    .padding(.bottom, 4)
+                
+                // 기능 카드들
+                VStack(spacing: 12) {
+                    HStack(spacing: 12) {
+                        CompactNoticeCard(
+                            icon: "bolt.fill",
+                            iconColor: .yellow,
+                            title: "플래시",
+                            description: "어두운 곳에서 활용"
+                        )
+                        
+                        CompactNoticeCard(
+                            icon: "camera.rotate.fill",
+                            iconColor: BrandPalette.accentMint,
+                            title: "카메라 전환",
+                            description: "전면/후면 전환"
+                        )
+                    }
+                    
+                    HStack(spacing: 12) {
+                        CompactNoticeCard(
+                            icon: "eye.slash.fill",
+                            iconColor: .purple,
+                            title: "화면보호 모드",
+                            description: "잠금화면 스타일 보호"
+                        )
+                        
+                        CompactNoticeCard(
+                            icon: "gearshape.fill",
+                            iconColor: .orange,
+                            title: "설정",
+                            description: "하단 기어 아이콘"
+                        )
+                    }
+                }
+                .padding(.horizontal, 28)
+                
+                Spacer()
+                    .frame(height: 140)
             }
         }
     }
@@ -919,7 +897,7 @@ struct PermissionPage: View {
                             Text("설정에서 권한 허용하기")
                         }
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.blue)
+                        .foregroundColor(BrandPalette.accentMint)
                     }
                 }
             }
@@ -1167,7 +1145,7 @@ struct PermissionButton: View {
                 } else if !isRequesting {
                     Image(systemName: "arrow.right.circle.fill")
                         .font(.system(size: 24))
-                        .foregroundColor(.blue)
+                        .foregroundColor(BrandPalette.accentMint)
                 }
             }
             .padding(16)
