@@ -19,9 +19,9 @@ class CameraManager: NSObject, ObservableObject {
     @Published var isSessionRunning = false
     @Published var errorMessage: String?
     @Published var showError: Bool = false
-    @Published var isFlashOn = false
     @Published var isUsingFrontCamera = false
     @Published var currentResolutionLabel = "-"
+    @Published var currentZoomFactor: CGFloat = AppConstants.Camera.minimumZoomFactor
     
     // Camera session
     let session = AVCaptureSession()
@@ -94,6 +94,8 @@ class CameraManager: NSObject, ObservableObject {
     // MARK: - Setup
     
     func setupCamera() async {
+        let stabilizationEnabled = SettingsManager.shared.isStabilizationEnabled
+
         await withCheckedContinuation { continuation in
             sessionQueue.async { [weak self] in
                 guard let self = self else {
@@ -148,14 +150,10 @@ class CameraManager: NSObject, ObservableObject {
                         self.videoOutput.alwaysDiscardsLateVideoFrames = false
                         self.videoOutput.setSampleBufferDelegate(self, queue: self.outputQueue)
                         
-                        // 손떨림 방지 (Video Stabilization) - 설정값 반영
-                        if let connection = self.videoOutput.connection(with: .video) {
-                            if connection.isVideoStabilizationSupported {
-                                let enabled = SettingsManager.shared.isStabilizationEnabled
-                                connection.preferredVideoStabilizationMode = enabled ? .cinematic : .off
-                                debugPrint("✅ Video stabilization: \(enabled ? "cinematic" : "off")")
-                            }
-                        }
+                        self.configureVideoStabilization(
+                            for: camera,
+                            enabled: stabilizationEnabled
+                        )
                     }
                     
                     // 자동 초점/노출 설정
@@ -172,8 +170,18 @@ class CameraManager: NSObject, ObservableObject {
                     if camera.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
                         camera.whiteBalanceMode = .continuousAutoWhiteBalance
                     }
+
+                    let appliedZoomFactor = self.clampedZoomFactor(
+                        AppConstants.Camera.minimumZoomFactor,
+                        for: camera
+                    )
+                    camera.videoZoomFactor = appliedZoomFactor
                     
                     camera.unlockForConfiguration()
+
+                    Task { @MainActor in
+                        self.currentZoomFactor = appliedZoomFactor
+                    }
                     
                 } catch {
                     Task { @MainActor in
@@ -205,31 +213,12 @@ class CameraManager: NSObject, ObservableObject {
         debugPrint("✅ CIContext warmed up in \(String(format: "%.3f", elapsed))s")
     }
     
-    // MARK: - Flash Control
-    
-    func toggleFlash() {
-        sessionQueue.async { [weak self] in
-            guard let self = self,
-                  let device = self.videoDeviceInput?.device,
-                  device.hasTorch else { return }
-            
-            do {
-                try device.lockForConfiguration()
-                device.torchMode = device.torchMode == .on ? .off : .on
-                device.unlockForConfiguration()
-                
-                Task { @MainActor in
-                    self.isFlashOn = (device.torchMode == .on)
-                }
-            } catch {
-                debugPrint("❌ Flash toggle failed: \(error)")
-            }
-        }
-    }
-    
     // MARK: - Camera Switch
     
     func switchCamera() {
+        let currentZoomFactor = self.currentZoomFactor
+        let stabilizationEnabled = SettingsManager.shared.isStabilizationEnabled
+
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
             
@@ -253,11 +242,16 @@ class CameraManager: NSObject, ObservableObject {
                 }
                 
                 self.session.commitConfiguration()
+                self.configureVideoStabilization(
+                    for: newDevice,
+                    enabled: stabilizationEnabled
+                )
+                let appliedZoomFactor = self.applyZoomFactor(currentZoomFactor, to: newDevice)
                 
                 self._isFrontCamera = (newPosition == .front)
                 Task { @MainActor in
                     self.isUsingFrontCamera = (newPosition == .front)
-                    self.isFlashOn = false
+                    self.currentZoomFactor = appliedZoomFactor
                 }
             } catch {
                 debugPrint("❌ Camera switch failed: \(error)")
@@ -268,6 +262,8 @@ class CameraManager: NSObject, ObservableObject {
     // MARK: - Session Control
     
     func startSession() {
+        let stabilizationEnabled = SettingsManager.shared.isStabilizationEnabled
+
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
             
@@ -279,6 +275,13 @@ class CameraManager: NSObject, ObservableObject {
             }
             
             self.session.startRunning()
+            
+            if let device = self.videoDeviceInput?.device {
+                self.configureVideoStabilization(
+                    for: device,
+                    enabled: stabilizationEnabled
+                )
+            }
             
             Task { @MainActor in
                 self.isSessionRunning = true
@@ -305,12 +308,114 @@ class CameraManager: NSObject, ObservableObject {
     func updateStabilization(enabled: Bool) {
         sessionQueue.async { [weak self] in
             guard let self = self,
-                  let connection = self.videoOutput.connection(with: .video) else { return }
-            
-            if connection.isVideoStabilizationSupported {
-                connection.preferredVideoStabilizationMode = enabled ? .cinematic : .off
-                debugPrint("✅ Video stabilization updated: \(enabled ? "cinematic" : "off")")
+                  let device = self.videoDeviceInput?.device else { return }
+
+            self.configureVideoStabilization(for: device, enabled: enabled)
+        }
+    }
+
+    // MARK: - Zoom Control
+
+    func setZoomFactor(_ zoomFactor: CGFloat) {
+        sessionQueue.async { [weak self] in
+            guard let self = self,
+                  let device = self.videoDeviceInput?.device else { return }
+
+            let appliedZoomFactor = self.applyZoomFactor(zoomFactor, to: device)
+
+            Task { @MainActor in
+                self.currentZoomFactor = appliedZoomFactor
             }
+        }
+    }
+
+    private func clampedZoomFactor(_ zoomFactor: CGFloat, for device: AVCaptureDevice) -> CGFloat {
+        let minimumZoomFactor = max(
+            device.minAvailableVideoZoomFactor,
+            AppConstants.Camera.minimumZoomFactor
+        )
+        let maximumZoomFactor = min(
+            device.maxAvailableVideoZoomFactor,
+            AppConstants.Camera.maximumZoomFactor
+        )
+
+        return min(max(zoomFactor, minimumZoomFactor), max(maximumZoomFactor, minimumZoomFactor))
+    }
+
+    private func applyZoomFactor(_ zoomFactor: CGFloat, to device: AVCaptureDevice) -> CGFloat {
+        let clampedZoomFactor = clampedZoomFactor(zoomFactor, for: device)
+
+        do {
+            try device.lockForConfiguration()
+            device.videoZoomFactor = clampedZoomFactor
+            device.unlockForConfiguration()
+            return clampedZoomFactor
+        } catch {
+            debugPrint("❌ Zoom update failed: \(error)")
+            return device.videoZoomFactor
+        }
+    }
+
+    private func configureVideoStabilization(for device: AVCaptureDevice, enabled: Bool) {
+        guard let connection = videoOutput.connection(with: .video) else { return }
+
+        guard connection.isVideoStabilizationSupported else {
+            debugPrint("⚠️ Video stabilization not supported on this connection")
+            return
+        }
+
+        let mode = enabled ? preferredStabilizationMode(for: device) : .off
+        connection.preferredVideoStabilizationMode = mode
+
+        debugPrint("✅ Video stabilization requested: \(stabilizationModeDescription(mode))")
+    }
+
+    private func preferredStabilizationMode(for device: AVCaptureDevice) -> AVCaptureVideoStabilizationMode {
+        let format = device.activeFormat
+
+        if #available(iOS 18.0, *),
+           format.isVideoStabilizationModeSupported(.cinematicExtendedEnhanced) {
+            return .cinematicExtendedEnhanced
+        }
+
+        if #available(iOS 13.0, *),
+           format.isVideoStabilizationModeSupported(.cinematicExtended) {
+            return .cinematicExtended
+        }
+
+        if format.isVideoStabilizationModeSupported(.cinematic) {
+            return .cinematic
+        }
+
+        if format.isVideoStabilizationModeSupported(.standard) {
+            return .standard
+        }
+
+        return .auto
+    }
+
+    private func stabilizationModeDescription(_ mode: AVCaptureVideoStabilizationMode) -> String {
+        switch mode {
+        case .off:
+            return "off"
+        case .standard:
+            return "standard"
+        case .cinematic:
+            return "cinematic"
+        case .cinematicExtended:
+            return "cinematicExtended"
+        case .previewOptimized:
+            return "previewOptimized"
+        case .cinematicExtendedEnhanced:
+            return "cinematicExtendedEnhanced"
+        case .auto:
+            return "auto"
+        default:
+            if #available(iOS 26.0, *), mode == .lowLatency {
+                return "lowLatency"
+            }
+
+            return "unknown"
         }
     }
     
@@ -485,4 +590,3 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         }
     }
 }
-

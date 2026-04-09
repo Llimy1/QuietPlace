@@ -260,6 +260,156 @@ struct GalleryView: View {
     }
 }
 
+private enum DragSelectionMode {
+    case select
+    case deselect
+}
+
+private struct PhotoFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
+struct SelectablePhotoGrid: View {
+    let photos: [PhotoItem]
+    @Binding var isSelectionMode: Bool
+    @Binding var selectedPhotos: Set<String>
+    let onPhotoTap: (PhotoItem) -> Void
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 2),
+        GridItem(.flexible(), spacing: 2),
+        GridItem(.flexible(), spacing: 2)
+    ]
+
+    @State private var photoFrames: [String: CGRect] = [:]
+    @State private var dragSelectionMode: DragSelectionMode?
+    @State private var handledPhotoIDs: Set<String> = []
+    @State private var lastDragLocation: CGPoint?
+    @State private var coordinateSpaceName = UUID().uuidString
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 2) {
+            ForEach(photos) { photo in
+                PhotoThumbnail(
+                    photo: photo,
+                    isSelected: selectedPhotos.contains(photo.id),
+                    isSelectionMode: isSelectionMode
+                )
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: PhotoFramePreferenceKey.self,
+                            value: [photo.id: proxy.frame(in: .named(coordinateSpaceName))]
+                        )
+                    }
+                }
+                .onTapGesture {
+                    handlePhotoTap(photo)
+                }
+            }
+        }
+        .coordinateSpace(name: coordinateSpaceName)
+        .onPreferenceChange(PhotoFramePreferenceKey.self) { frames in
+            let visiblePhotoIDs = Set(photos.map(\.id))
+            photoFrames = frames.filter { visiblePhotoIDs.contains($0.key) }
+        }
+        .simultaneousGesture(dragSelectionGesture)
+        .onChange(of: isSelectionMode) { _, isEnabled in
+            if !isEnabled {
+                resetDragSelection()
+            }
+        }
+    }
+
+    private var dragSelectionGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(coordinateSpaceName))
+            .onChanged { value in
+                guard isSelectionMode else { return }
+                guard let mode = beginDragSelectionIfNeeded(at: value.startLocation) else { return }
+
+                let startPoint = lastDragLocation ?? value.startLocation
+                updateDragSelection(from: startPoint, to: value.location, mode: mode)
+                lastDragLocation = value.location
+            }
+            .onEnded { _ in
+                resetDragSelection()
+            }
+    }
+
+    private func handlePhotoTap(_ photo: PhotoItem) {
+        if isSelectionMode {
+            toggleSelection(for: photo.id)
+        } else {
+            onPhotoTap(photo)
+        }
+    }
+
+    private func toggleSelection(for photoID: String) {
+        if selectedPhotos.contains(photoID) {
+            selectedPhotos.remove(photoID)
+        } else {
+            selectedPhotos.insert(photoID)
+        }
+    }
+
+    private func beginDragSelectionIfNeeded(at startLocation: CGPoint) -> DragSelectionMode? {
+        if let dragSelectionMode {
+            return dragSelectionMode
+        }
+
+        guard let photoID = photoID(at: startLocation) else { return nil }
+        let mode: DragSelectionMode = selectedPhotos.contains(photoID) ? .deselect : .select
+        dragSelectionMode = mode
+        applyDragSelection(to: [photoID], mode: mode)
+        return mode
+    }
+
+    private func updateDragSelection(from start: CGPoint, to end: CGPoint, mode: DragSelectionMode) {
+        let sweepRect = CGRect(
+            x: min(start.x, end.x),
+            y: min(start.y, end.y),
+            width: max(abs(end.x - start.x), 1),
+            height: max(abs(end.y - start.y), 1)
+        )
+        .insetBy(dx: -8, dy: -8)
+
+        let touchedPhotoIDs = photoFrames.compactMap { photoID, frame in
+            frame.intersects(sweepRect) ? photoID : nil
+        }
+
+        applyDragSelection(to: touchedPhotoIDs, mode: mode)
+    }
+
+    private func applyDragSelection(to photoIDs: [String], mode: DragSelectionMode) {
+        for photoID in photoIDs {
+            guard handledPhotoIDs.insert(photoID).inserted else { continue }
+
+            switch mode {
+            case .select:
+                selectedPhotos.insert(photoID)
+            case .deselect:
+                selectedPhotos.remove(photoID)
+            }
+        }
+    }
+
+    private func photoID(at location: CGPoint) -> String? {
+        photoFrames.first(where: { _, frame in
+            frame.contains(location)
+        })?.key
+    }
+
+    private func resetDragSelection() {
+        dragSelectionMode = nil
+        handledPhotoIDs.removeAll()
+        lastDragLocation = nil
+    }
+}
+
 // 사진 섹션 (날짜별 광고 1개 - 사진 중간에 삽입)
 struct PhotoSectionWithAds: View {
     let title: String
@@ -301,26 +451,12 @@ struct PhotoSectionWithAds: View {
     
     @ViewBuilder
     private func photoGrid(photos: [PhotoItem]) -> some View {
-        LazyVGrid(columns: columns, spacing: 2) {
-            ForEach(photos) { photo in
-                PhotoThumbnail(
-                    photo: photo,
-                    isSelected: selectedPhotos.contains(photo.id),
-                    isSelectionMode: isSelectionMode
-                )
-                .onTapGesture {
-                    if isSelectionMode {
-                        if selectedPhotos.contains(photo.id) {
-                            selectedPhotos.remove(photo.id)
-                        } else {
-                            selectedPhotos.insert(photo.id)
-                        }
-                    } else {
-                        onPhotoTap(photo)
-                    }
-                }
-            }
-        }
+        SelectablePhotoGrid(
+            photos: photos,
+            isSelectionMode: $isSelectionMode,
+            selectedPhotos: $selectedPhotos,
+            onPhotoTap: onPhotoTap
+        )
     }
 }
 
@@ -344,26 +480,12 @@ struct PhotoSection: View {
                 .font(.system(size: 17, weight: .semibold))
                 .padding(.horizontal, 16)
             
-            LazyVGrid(columns: columns, spacing: 2) {
-                ForEach(photos) { photo in
-                    PhotoThumbnail(
-                        photo: photo,
-                        isSelected: selectedPhotos.contains(photo.id),
-                        isSelectionMode: isSelectionMode
-                    )
-                    .onTapGesture {
-                        if isSelectionMode {
-                            if selectedPhotos.contains(photo.id) {
-                                selectedPhotos.remove(photo.id)
-                            } else {
-                                selectedPhotos.insert(photo.id)
-                            }
-                        } else {
-                            onPhotoTap(photo)
-                        }
-                    }
-                }
-            }
+            SelectablePhotoGrid(
+                photos: photos,
+                isSelectionMode: $isSelectionMode,
+                selectedPhotos: $selectedPhotos,
+                onPhotoTap: onPhotoTap
+            )
         }
     }
 }

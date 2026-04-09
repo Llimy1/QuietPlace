@@ -588,17 +588,17 @@ struct CameraFeaturesPage: View {
                 VStack(spacing: 12) {
                     HStack(spacing: 12) {
                         CompactNoticeCard(
-                            icon: "bolt.fill",
-                            iconColor: .yellow,
-                            title: "플래시",
-                            description: "어두운 곳에서 활용"
-                        )
-                        
-                        CompactNoticeCard(
                             icon: "camera.rotate.fill",
                             iconColor: BrandPalette.accentMint,
                             title: "카메라 전환",
                             description: "전면/후면 전환"
+                        )
+                        
+                        CompactNoticeCard(
+                            icon: "arrow.up.left.and.arrow.down.right",
+                            iconColor: .blue,
+                            title: "핀치 줌",
+                            description: "두 손가락으로 확대/축소"
                         )
                     }
                     
@@ -1163,4 +1163,3 @@ struct PermissionButton: View {
 #Preview {
     OnboardingView(isFirstLaunch: .constant(true))
 }
-
