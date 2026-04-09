@@ -20,9 +20,11 @@ class VolumeButtonHandler: ObservableObject {
     private var audioSession: AVAudioSession?
     private var volumeView: MPVolumeView?
     private var hiddenVolumeView: MPVolumeView?  // 시스템 UI를 숨기기 위한 뷰
+    private weak var volumeSlider: UISlider?
     private var observation: NSKeyValueObservation?
     private var previousVolume: Float = 0.5
     private var isMonitoring: Bool = false  // 중복 시작 방지
+    private let monitoringVolume: Float = 0.5
     
     private init() {}  // Singleton이므로 private init
     
@@ -80,28 +82,34 @@ class VolumeButtonHandler: ObservableObject {
         hiddenVolumeView?.removeFromSuperview()
         hiddenVolumeView = nil
         volumeView = nil
+        volumeSlider = nil
         
         debugPrint("🔊 [Volume] Resources cleaned up")
     }
     
     private func setupHiddenVolumeView() {
-        // 화면 밖에 MPVolumeView를 배치하여 시스템 볼륨 UI를 숨김
-        DispatchQueue.main.async {
-            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                  let window = windowScene.windows.first else {
-                return
-            }
-            
-            // 화면 밖에 작은 크기로 배치 (완전히 투명하고 보이지 않음)
-            let volumeView = MPVolumeView(frame: CGRect(x: -1000, y: -1000, width: 1, height: 1))
-            volumeView.alpha = 0.01  // 거의 투명하게
-            volumeView.clipsToBounds = true
-            volumeView.isUserInteractionEnabled = false
-            
-            // 윈도우에 추가하여 시스템 볼륨 UI를 대체
-            window.addSubview(volumeView)
-            self.hiddenVolumeView = volumeView
-            
+        guard let windowScene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive || $0.activationState == .foregroundInactive }),
+              let window = windowScene.windows.first(where: \.isKeyWindow) ?? windowScene.windows.first else {
+            debugPrint("❌ Failed to find active window for volume monitoring")
+            return
+        }
+
+        // 화면 밖에 작은 크기로 배치 (완전히 투명하고 보이지 않음)
+        let volumeView = MPVolumeView(frame: CGRect(x: -1000, y: -1000, width: 1, height: 1))
+        volumeView.alpha = 0.01
+        volumeView.clipsToBounds = true
+        volumeView.isUserInteractionEnabled = false
+
+        window.addSubview(volumeView)
+        hiddenVolumeView = volumeView
+        self.volumeView = volumeView
+        volumeSlider = volumeView.subviews.compactMap { $0 as? UISlider }.first
+
+        if volumeSlider == nil {
+            debugPrint("⚠️ Hidden volume slider not found")
+        } else {
             debugPrint("✅ Hidden volume view added to suppress system UI")
         }
     }
@@ -121,9 +129,9 @@ class VolumeButtonHandler: ObservableObject {
             
             // 볼륨을 중간값으로 설정 (버튼 감지를 위해)
             if previousVolume <= 0.1 || previousVolume >= 0.9 {
-                setSystemVolume(0.5)
-                previousVolume = 0.5
-                debugPrint("⚙️ Volume adjusted to 0.5 for better detection")
+                previousVolume = monitoringVolume
+                setSystemVolume(monitoringVolume)
+                debugPrint("⚙️ Volume adjusted to \(monitoringVolume) for better detection")
             }
         } catch {
             debugPrint("❌ Failed to setup audio session: \(error)")
@@ -158,47 +166,38 @@ class VolumeButtonHandler: ObservableObject {
             // 볼륨 업
             debugPrint("🔊 ⬆️ Volume UP")
             volumeUpPressed = true
-            objectWillChange.send()
             
             setSystemVolume(previousVolume)
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 self.volumeUpPressed = false
-                self.objectWillChange.send()
             }
             
         } else if newVolume < previousVolume - threshold {
             // 볼륨 다운
             debugPrint("🔊 ⬇️ Volume DOWN")
             volumeDownPressed = true
-            objectWillChange.send()
             
             setSystemVolume(previousVolume)
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 self.volumeDownPressed = false
-                self.objectWillChange.send()
             }
         }
     }
     
     private func setSystemVolume(_ volume: Float) {
         debugPrint("🔊 Setting volume: \(volume)")
-        
-        DispatchQueue.main.async {
-            if self.volumeView == nil {
-                self.volumeView = MPVolumeView(frame: .zero)
-            }
-            
-            guard let volumeView = self.volumeView,
-                  let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider else {
-                debugPrint("❌ Volume slider not found")
-                return
-            }
-            
-            slider.value = volume
-            debugPrint("✅ Volume set to: \(volume)")
+
+        guard let slider = volumeSlider else {
+            debugPrint("❌ Volume slider not found")
+            return
         }
+
+        slider.setValue(volume, animated: false)
+        slider.sendActions(for: .valueChanged)
+        slider.sendActions(for: .touchUpInside)
+        debugPrint("✅ Volume set to: \(volume)")
     }
     
     deinit {
@@ -218,5 +217,4 @@ class VolumeButtonHandler: ObservableObject {
         volumeView = nil
     }
 }
-
 

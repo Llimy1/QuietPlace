@@ -50,6 +50,14 @@ class SettingsManager: ObservableObject {
             debugPrint("✅ Stabilization: \(isStabilizationEnabled ? "ON" : "OFF")")
         }
     }
+
+    // 구도 그리드 표시 여부
+    @Published var isGridEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isGridEnabled, forKey: "isGridEnabled")
+            debugPrint("✅ Grid: \(isGridEnabled ? "ON" : "OFF")")
+        }
+    }
     
     // 위장 모드 오버레이 불투명도 (30% ~ 80%)
     @Published var disguiseOverlayOpacity: Double {
@@ -79,6 +87,9 @@ class SettingsManager: ObservableObject {
         
         // 손떨림 방지 (기본값: 활성화)
         self.isStabilizationEnabled = UserDefaults.standard.object(forKey: "isStabilizationEnabled") as? Bool ?? true
+
+        // 구도 그리드 (기본값: 활성화)
+        self.isGridEnabled = UserDefaults.standard.object(forKey: "isGridEnabled") as? Bool ?? true
         
         // 위장 모드 오버레이 불투명도 (기본값: 90%)
         let savedOpacity = UserDefaults.standard.object(forKey: "disguiseOverlayOpacity") as? Double ?? 0.90
@@ -95,9 +106,9 @@ class SettingsManager: ObservableObject {
         isDisguiseMode = false
         disguiseOverlayOpacity = 0.80
         isStabilizationEnabled = true
+        isGridEnabled = true
         debugPrint("✅ Settings reset to defaults")
     }
 }
-
 
 

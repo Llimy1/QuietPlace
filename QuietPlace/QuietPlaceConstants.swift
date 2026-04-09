@@ -73,6 +73,12 @@ enum AppConstants {
     // MARK: - Camera
     
     enum Camera {
+        /// 최소 줌 배율
+        static let minimumZoomFactor: CGFloat = 1.0
+
+        /// 최대 줌 배율 (품질 저하 방지를 위해 앱에서 제한)
+        static let maximumZoomFactor: CGFloat = 5.0
+
         /// 프레임 대기 최대 반복 횟수
         static let maxFrameWaitAttempts = 20
         
@@ -81,6 +87,9 @@ enum AppConstants {
         
         /// JPEG 압축 품질 (0.0 ~ 1.0)
         static let jpegCompressionQuality: CGFloat = 0.9
+
+        /// 줌 인디케이터 표시 유지 시간
+        static let zoomIndicatorDismissDelay: TimeInterval = 1.2
     }
     
     // MARK: - UserDefaults Keys

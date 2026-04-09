@@ -31,6 +31,9 @@ struct CameraView: View {
     @State private var focusPoint: CGPoint? = nil
     @State private var showFocusIndicator = false
     @State private var focusTask: Task<Void, Never>? = nil
+    @State private var zoomGestureStartFactor: CGFloat?
+    @State private var showZoomIndicator = false
+    @State private var zoomIndicatorTask: Task<Void, Never>?
     
     var body: some View {
         GeometryReader { geometry in
@@ -38,6 +41,12 @@ struct CameraView: View {
                 // 풀스크린 카메라 프리뷰
                 CameraPreview(session: cameraManager.session)
                     .ignoresSafeArea()
+
+                if !settingsManager.isDisguiseMode && settingsManager.isGridEnabled {
+                    CameraGridOverlay()
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
                 
                 // 탭 포커스 (위장 모드가 아닐 때만)
                 if !settingsManager.isDisguiseMode {
@@ -47,6 +56,7 @@ struct CameraView: View {
                         .onTapGesture { location in
                             focusAt(point: location, viewSize: geometry.size)
                         }
+                        .simultaneousGesture(cameraZoomGesture)
                     
                     // 포커스 인디케이터
                     if showFocusIndicator, let point = focusPoint {
@@ -65,6 +75,24 @@ struct CameraView: View {
                     Color.black
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
+                }
+
+                if !settingsManager.isDisguiseMode &&
+                    (showZoomIndicator || cameraManager.currentZoomFactor > AppConstants.Camera.minimumZoomFactor + 0.01) {
+                    VStack {
+                        Text(zoomFactorText)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.white)
+                            .monospacedDigit()
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(Color.black.opacity(0.45))
+                            .clipShape(Capsule())
+                            .padding(.top, 64)
+
+                        Spacer()
+                    }
+                    .allowsHitTesting(false)
                 }
                 
                 // 카메라 UI (위장 모드가 아닐 때만 표시)
@@ -166,36 +194,57 @@ struct CameraView: View {
         VStack {
             // 상단 바
             HStack {
-                // 플래시 버튼
                 Button(action: {
-                    cameraManager.toggleFlash()
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        settingsManager.isDisguiseMode = true
+                    }
                 }) {
-                    Image(systemName: cameraManager.isFlashOn ? "bolt.fill" : "bolt.slash.fill")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(cameraManager.isFlashOn ? .yellow : .white)
-                        .frame(width: 44, height: 44)
-                        .background(Color.black.opacity(0.4))
-                        .clipShape(Circle())
+                    Image(systemName: "eye.slash.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.3))
+                        .frame(width: 36, height: 36)
                 }
-                
+                .padding(.leading, 16)
+                .padding(.top, 8)
+
                 Spacer()
-                
-                // 카메라 전환 버튼
-                Button(action: {
-                    cameraManager.switchCamera()
-                }) {
-                    Image(systemName: "camera.rotate.fill")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(.white)
-                        .frame(width: 44, height: 44)
-                        .background(Color.black.opacity(0.4))
-                        .clipShape(Circle())
+
+                HStack(spacing: 12) {
+                    Button(action: {
+                        settingsManager.isGridEnabled.toggle()
+                    }) {
+                        Image(systemName: settingsManager.isGridEnabled ? "square.grid.3x3.fill" : "square.grid.3x3")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundColor(.white)
+                            .frame(width: 44, height: 44)
+                            .background(
+                                settingsManager.isGridEnabled
+                                    ? Color.white.opacity(0.22)
+                                    : Color.black.opacity(0.4)
+                            )
+                            .clipShape(Circle())
+                    }
+
+                    // 카메라 전환 버튼
+                    Button(action: {
+                        cameraManager.switchCamera()
+                    }) {
+                        Image(systemName: "camera.rotate.fill")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundColor(.white)
+                            .frame(width: 44, height: 44)
+                            .background(Color.black.opacity(0.4))
+                            .clipShape(Circle())
+                    }
                 }
+                .padding(.trailing, 20)
+                .padding(.top, 10)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 10)
             
             Spacer()
+
+            quickZoomControls()
+                .padding(.bottom, 18)
             
             // 하단 바: 촬영 버튼 중앙 고정, 양쪽 대칭
 //            ZStack {
@@ -299,47 +348,28 @@ struct CameraView: View {
                 
                 // 2. 좌우 버튼 (HStack - 기본 center 정렬)
                 HStack {
-                    // 왼쪽: 갤러리 (기준) + 위장 모드 (위로 띄움)
-                    ZStack {
-                        // 갤러리 썸네일 (레이아웃의 기준점)
-                        Button(action: {
-                            showGallery = true
-                        }) {
-                            if let thumbnail = lastThumbnail {
-                                Image(uiImage: thumbnail)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: 50, height: 50)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .stroke(Color.white.opacity(0.5), lineWidth: 1.5)
-                                    )
-                            } else {
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color.white.opacity(0.2))
-                                    .frame(width: 50, height: 50)
-                                    .overlay(
-                                        Image(systemName: "photo.fill")
-                                            .foregroundColor(.white.opacity(0.6))
-                                    )
-                            }
-                        }
-                        
-                        // 화면보호 모드 버튼 (레이아웃에 영향을 주지 않고 시각적으로만 위로 이동)
-                        Button(action: {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                settingsManager.isDisguiseMode = true
-                            }
-                        }) {
-                            Image(systemName: "eye.slash.fill")
-                                .font(.system(size: 18, weight: .medium))
-                                .foregroundColor(.white)
+                    Button(action: {
+                        showGallery = true
+                    }) {
+                        if let thumbnail = lastThumbnail {
+                            Image(uiImage: thumbnail)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
                                 .frame(width: 50, height: 50)
-                                .background(Color.black.opacity(0.4))
-                                .clipShape(Circle())
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(Color.white.opacity(0.5), lineWidth: 1.5)
+                                )
+                        } else {
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.white.opacity(0.2))
+                                .frame(width: 50, height: 50)
+                                .overlay(
+                                    Image(systemName: "photo.fill")
+                                        .foregroundColor(.white.opacity(0.6))
+                                )
                         }
-                        .offset(y: -62) // 버튼 높이(50) + 원하는 간격(12) 만큼 위로 올림
                     }
                     
                     Spacer()
@@ -361,6 +391,38 @@ struct CameraView: View {
             .padding(.bottom, 30)
         }
     }
+
+    @ViewBuilder
+    private func quickZoomControls() -> some View {
+        let quickZoomPresets: [CGFloat] = [1, 2, 5]
+
+        HStack(spacing: 12) {
+            ForEach(quickZoomPresets, id: \.self) { preset in
+                Button(action: {
+                    showZoomIndicator = true
+                    zoomIndicatorTask?.cancel()
+                    cameraManager.setZoomFactor(preset)
+                    scheduleZoomIndicatorDismiss()
+                }) {
+                    Text("\(Int(preset))x")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(isZoomPresetSelected(preset) ? .black : .white)
+                        .frame(minWidth: 52)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 10)
+                        .background(
+                            Capsule()
+                                .fill(isZoomPresetSelected(preset) ? Color.white : Color.black.opacity(0.35))
+                        )
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(isZoomPresetSelected(preset) ? 0 : 0.18), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
     
     // MARK: - Disguise Mode Overlay
     
@@ -374,10 +436,21 @@ struct CameraView: View {
                 endPoint: .bottomTrailing
             )
             .ignoresSafeArea()
+            .allowsHitTesting(false)
             
             // 어두운 오버레이
             Color.black.opacity(settingsManager.disguiseOverlayOpacity)
                 .ignoresSafeArea()
+                .allowsHitTesting(false)
+
+            if settingsManager.tapToCapture {
+                Color.clear
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        takePhoto()
+                    }
+            }
             
             // 시간 표시
             VStack {
@@ -396,6 +469,7 @@ struct CameraView: View {
                 
                 Spacer()
             }
+            .allowsHitTesting(false)
             
             // 하단 잠금화면 아이콘
             VStack {
@@ -407,8 +481,13 @@ struct CameraView: View {
                     
                     Spacer()
                     
-                    LockScreenButton(systemName: "camera.fill")
-                        .padding(.trailing, 40)
+                    Button(action: {
+                        showGallery = true
+                    }) {
+                        LockScreenButton(systemName: "camera.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 40)
                 }
                 .padding(.bottom, 40)
             }
@@ -432,12 +511,6 @@ struct CameraView: View {
                     Spacer()
                 }
                 Spacer()
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if settingsManager.tapToCapture {
-                takePhoto()
             }
         }
     }
@@ -493,6 +566,44 @@ struct CameraView: View {
             withAnimation(.easeOut(duration: 0.3)) {
                 showFocusIndicator = false
             }
+        }
+    }
+
+    private var cameraZoomGesture: some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                if zoomGestureStartFactor == nil {
+                    zoomGestureStartFactor = cameraManager.currentZoomFactor
+                }
+
+                let startFactor = zoomGestureStartFactor ?? cameraManager.currentZoomFactor
+                showZoomIndicator = true
+                zoomIndicatorTask?.cancel()
+                cameraManager.setZoomFactor(startFactor * value)
+            }
+            .onEnded { _ in
+                zoomGestureStartFactor = nil
+                scheduleZoomIndicatorDismiss()
+            }
+    }
+
+    private var zoomFactorText: String {
+        String(format: "%.1fx", cameraManager.currentZoomFactor)
+    }
+
+    private func isZoomPresetSelected(_ preset: CGFloat) -> Bool {
+        abs(cameraManager.currentZoomFactor - preset) < 0.15
+    }
+
+    private func scheduleZoomIndicatorDismiss() {
+        zoomIndicatorTask?.cancel()
+        zoomIndicatorTask = Task {
+            try? await Task.sleep(
+                for: .seconds(AppConstants.Camera.zoomIndicatorDismissDelay)
+            )
+
+            guard !Task.isCancelled else { return }
+            showZoomIndicator = false
         }
     }
     
@@ -593,6 +704,32 @@ struct LockScreenButton: View {
                 .stroke(Color.white.opacity(0.3), lineWidth: 1.5)
         )
         .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+    }
+}
+
+struct CameraGridOverlay: View {
+    var body: some View {
+        GeometryReader { geometry in
+            Path { path in
+                let width = geometry.size.width
+                let height = geometry.size.height
+                let thirdWidth = width / 3
+                let thirdHeight = height / 3
+
+                for index in 1...2 {
+                    let x = thirdWidth * CGFloat(index)
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: height))
+                }
+
+                for index in 1...2 {
+                    let y = thirdHeight * CGFloat(index)
+                    path.move(to: CGPoint(x: 0, y: y))
+                    path.addLine(to: CGPoint(x: width, y: y))
+                }
+            }
+            .stroke(Color.white.opacity(0.22), lineWidth: 0.8)
+        }
     }
 }
 
