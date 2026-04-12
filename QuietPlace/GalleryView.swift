@@ -161,11 +161,14 @@ struct GalleryView: View {
                 Text(photoDataManager.errorMessage ?? "알 수 없는 오류가 발생했습니다")
             }
             .onAppear {
-                // 첫 진입 시에만 로드 (fullScreenCover 복귀 시 재로드 방지)
+                // PhotoDataManager.init()에서 이미 로드를 시작하므로
+                // photos가 비어있을 때(아직 로드 전)만 명시적 로드 호출
                 guard !hasInitialized else { return }
                 hasInitialized = true
-                Task {
-                    await photoDataManager.loadPhotosAsync()
+                if photoDataManager.photos.isEmpty {
+                    Task {
+                        await photoDataManager.loadPhotosAsync()
+                    }
                 }
             }
             .overlay {
