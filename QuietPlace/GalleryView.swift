@@ -569,16 +569,22 @@ struct PhotoThumbnail: View {
     }
     
     private func loadThumbnail() {
-        // 이미 로드됨
         guard thumbnail == nil else { return }
-        
+
         let screenWidth = UIScreen.main.bounds.width
         let scale = UIScreen.main.scale
-        let thumbnailSize = (screenWidth / 3) * scale  // Retina 픽셀 크기로 요청
+        let thumbnailSize = (screenWidth / 3) * scale
         let size = CGSize(width: thumbnailSize, height: thumbnailSize)
         let photoItem = photo
-        
-        // .utility 우선순위: UI 렌더링 스레드와 경쟁 방지 (다수 셀 동시 로드 시 메인스레드 기아 예방)
+
+        // 메모리 캐시 즉시 확인 (Task 없이 동기, 캐시 히트 시 빠른 표시)
+        if let cached = ThumbnailCache.shared.memoryCache.object(forKey: photoItem.id as NSString) {
+            thumbnail = cached
+            isLoading = false
+            return
+        }
+
+        // 디스크 I/O는 백그라운드에서 (.utility: 메인스레드 경쟁 방지)
         Task.detached(priority: .utility) {
             let image = photoItem.getThumbnail(size: size)
             await MainActor.run {
@@ -637,6 +643,45 @@ struct SelectionActionBar: View {
     }
 }
 
+// 전체화면 개별 페이지 - 현재/인접 페이지만 실제 이미지 로드
+private struct FullscreenPhotoPage: View {
+    let photo: PhotoItem
+    let isNearby: Bool
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            } else if !isNearby {
+                Color.black
+            } else {
+                VStack(spacing: 20) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 48))
+                        .foregroundColor(.gray)
+                    Text("이미지를 불러올 수 없습니다")
+                        .foregroundColor(.gray)
+                }
+            }
+        }
+        .onAppear { if isNearby { loadImage() } }
+        .onChange(of: isNearby) { _, nearby in if nearby { loadImage() } }
+    }
+
+    private func loadImage() {
+        guard image == nil else { return }
+        let path = photo.fileURL.path
+        Task.detached(priority: .userInitiated) {
+            let img = UIImage(contentsOfFile: path)
+            await MainActor.run { image = img }
+        }
+    }
+}
+
 // 전체화면 사진 보기
 struct PhotoFullscreenView: View {
     let photos: [PhotoItem]
@@ -646,30 +691,18 @@ struct PhotoFullscreenView: View {
     @State private var isDownloading = false
     @State private var showDownloadAlert = false
     @State private var downloadMessage = ""
-    
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            
+
             // 사진
             TabView(selection: $currentIndex) {
                 ForEach(Array(photos.enumerated()), id: \.element.id) { index, photo in
-                    ZStack {
-                        if let image = UIImage(contentsOfFile: photo.fileURL.path) {
-                            Image(uiImage: image)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                        } else {
-                            VStack(spacing: 20) {
-                                Image(systemName: "exclamationmark.triangle")
-                                    .font(.system(size: 48))
-                                    .foregroundColor(.gray)
-                                
-                                Text("이미지를 불러올 수 없습니다")
-                                    .foregroundColor(.gray)
-                            }
-                        }
-                    }
+                    FullscreenPhotoPage(
+                        photo: photo,
+                        isNearby: abs(index - currentIndex) <= 1
+                    )
                     .tag(index)
                 }
             }
