@@ -55,10 +55,14 @@ struct GalleryView: View {
                     // 사진이 있을 때
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 20, pinnedViews: []) {
+                            // 네이티브 광고 1개 - LazyVStack 첫 항목으로 고정
+                            // (섹션마다 넣으면 스크롤 시 WKWebView 프로세스가 반복 생성/파괴됨)
+                            NativeAdCardView()
+
                             // 날짜별로 그룹핑된 사진들 (화면에 보이는 섹션만 렌더링)
                             ForEach(sortedDateKeys, id: \.self) { dateKey in
                                 if let sectionPhotos = groupedPhotos[dateKey] {
-                                    PhotoSectionWithAds(
+                                    PhotoSection(
                                         title: "\(dateKey) - \(formattedDate(for: sectionPhotos.first?.createdDate))",
                                         photos: sectionPhotos,
                                         isSelectionMode: $isSelectionMode,
@@ -74,7 +78,7 @@ struct GalleryView: View {
                             }
                         }
                         .padding(.top, 20)
-                        .padding(.bottom, 80) // 배너 광고 공간 확보
+                        .padding(.bottom, 80)
                     }
                 }
                 
