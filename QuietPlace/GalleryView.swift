@@ -12,12 +12,13 @@ struct GalleryView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var photoDataManager = PhotoDataManager.shared
     @State private var isSelectionMode = false
-    @State private var selectedPhotos: Set<String> = []  // PhotoItem ID로 변경
+    @State private var selectedPhotos: Set<String> = []
     @State private var showFullscreen = false
     @State private var selectedPhotoIndex = 0
     @State private var isDownloading = false
     @State private var showDownloadAlert = false
     @State private var downloadMessage = ""
+    @State private var hasInitialized = false
     
     var body: some View {
         ZStack {
@@ -169,14 +170,11 @@ struct GalleryView: View {
                 Text(photoDataManager.errorMessage ?? "알 수 없는 오류가 발생했습니다")
             }
             .onAppear {
+                // 첫 진입 시에만 로드 (fullScreenCover 복귀 시 재로드 방지)
+                guard !hasInitialized else { return }
+                hasInitialized = true
                 Task {
                     await photoDataManager.loadPhotosAsync()
-                }
-            }
-            .onDisappear {
-                // dismiss 애니메이션 완료 후 캐시 정리 (UI 버벅거림 방지)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    ThumbnailCache.shared.memoryCache.removeAllObjects()
                 }
             }
             .overlay {
@@ -580,8 +578,8 @@ struct PhotoThumbnail: View {
         let size = CGSize(width: thumbnailSize, height: thumbnailSize)
         let photoItem = photo
         
-        // 백그라운드에서 썸네일 로드 (메인 스레드 블로킹 방지)
-        Task.detached(priority: .userInitiated) {
+        // .utility 우선순위: UI 렌더링 스레드와 경쟁 방지 (다수 셀 동시 로드 시 메인스레드 기아 예방)
+        Task.detached(priority: .utility) {
             let image = photoItem.getThumbnail(size: size)
             await MainActor.run {
                 thumbnail = image
