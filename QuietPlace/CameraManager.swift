@@ -38,8 +38,10 @@ class CameraManager: NSObject, ObservableObject {
     nonisolated(unsafe) private var _isFrameReady = false
     nonisolated(unsafe) private var _isFrontCamera = false
 
-    // 멀티 프레임 수집 (선명도 기반 최적 프레임 선택)
-    nonisolated(unsafe) private var frameBuffer: [CIImage] = []
+    // 스트리밍 선명도 계산 (프레임 도착 즉시 계산, lock으로 보호)
+    nonisolated(unsafe) private var bestFrame: CIImage? = nil
+    nonisolated(unsafe) private var bestScore: Float = -1
+    nonisolated(unsafe) private var framesCollected: Int = 0
     nonisolated(unsafe) private var framesSkipped: Int = 0
 
     // ⚡️ 재사용 가능한 CIContext (Display P3 광색역, GPU 렌더링)
@@ -558,16 +560,18 @@ class CameraManager: NSObject, ObservableObject {
             self.photoContinuation = continuation
             captureLock.unlock()
             
-            // 타임아웃: skip(3) + collect(7) @ 30fps = ~330ms, 여유 있게 2초
+            // 타임아웃: skip(1) + collect(5) @ 30fps = ~200ms, 여유 있게 1초
             Task {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
 
                 captureLock.lock()
                 if self.photoContinuation != nil {
                     debugPrint("⚠️ Photo capture timeout")
                     self.photoContinuation?.resume(returning: nil)
                     self.photoContinuation = nil
-                    self.frameBuffer = []
+                    self.bestFrame = nil
+                    self.bestScore = -1
+                    self.framesCollected = 0
                     self.framesSkipped = 0
                 }
                 captureLock.unlock()
@@ -600,41 +604,52 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
 
         let ciImage = CIImage(cvPixelBuffer: imageBuffer)
 
+        // 스킵 체크 (lock 최소 보유)
         captureLock.lock()
-
-        // 스태빌라이제이션 버퍼가 안정화될 때까지 초기 프레임 스킵
         if framesSkipped < AppConstants.Camera.captureSkipFrames {
             framesSkipped += 1
             captureLock.unlock()
             return
         }
+        captureLock.unlock()
 
-        // 프레임 수집
-        frameBuffer.append(ciImage)
+        // 선명도 계산 (lock 없이, 프레임 대기 시간과 병렬 실행)
+        let score = calculateSharpness(of: ciImage)
 
-        guard frameBuffer.count >= AppConstants.Camera.captureFrameCount else {
+        // 결과 반영 (lock 최소 구간으로 재진입)
+        captureLock.lock()
+
+        if score > bestScore {
+            bestScore = score
+            bestFrame = ciImage
+        }
+        framesCollected += 1
+
+        guard framesCollected >= AppConstants.Camera.captureFrameCount else {
             captureLock.unlock()
             return
         }
 
-        // 수집 완료 - 최적 프레임 선택 준비
-        let frames = frameBuffer
+        // 수집 완료 - 최적 프레임 추출
+        let selectedFrame = bestFrame
         let continuation = photoContinuation
         photoContinuation = nil
-        frameBuffer = []
+        bestFrame = nil
+        bestScore = -1
+        framesCollected = 0
         framesSkipped = 0
 
         captureLock.unlock()
 
-        guard let continuation = continuation else { return }
+        guard let continuation = continuation, let selectedFrame = selectedFrame else {
+            continuation?.resume(returning: nil)
+            return
+        }
 
         let startTime = CFAbsoluteTimeGetCurrent()
 
-        // 가장 선명한 프레임 선택
-        let bestCIImage = selectSharpestFrame(from: frames)
-
-        // 노이즈 리덕션 + 샤프닝 후처리
-        let processedCIImage = applyPostProcessing(to: bestCIImage)
+        // 샤프닝만 적용 (선명도 선택으로 노이즈 프레임은 이미 걸러짐)
+        let processedCIImage = applyPostProcessing(to: selectedFrame)
 
         // Display P3 색공간으로 렌더링
         let p3ColorSpace = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
@@ -648,31 +663,11 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
             return
         }
 
-        let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-        debugPrint("✅ Best frame selected & processed in \(String(format: "%.3f", elapsed))s")
+        debugPrint("✅ Post-processing done in \(String(format: "%.3f", CFAbsoluteTimeGetCurrent() - startTime))s")
 
         let orientation: UIImage.Orientation = _isFrontCamera ? .leftMirrored : .right
         let image = UIImage(cgImage: cgImage, scale: 1.0, orientation: orientation)
         continuation.resume(returning: image)
-    }
-
-    // MARK: - 선명도 기반 최적 프레임 선택
-
-    private nonisolated func selectSharpestFrame(from frames: [CIImage]) -> CIImage {
-        var bestFrame = frames[0]
-        var bestScore: Float = -1
-
-        for (index, frame) in frames.enumerated() {
-            let score = calculateSharpness(of: frame)
-            debugPrint("🔍 Frame \(index) sharpness: \(String(format: "%.4f", score))")
-            if score > bestScore {
-                bestScore = score
-                bestFrame = frame
-            }
-        }
-
-        debugPrint("🎯 Best sharpness score: \(String(format: "%.4f", bestScore))")
-        return bestFrame
     }
 
     /// Laplacian 엣지 기반 선명도 점수 (높을수록 선명)
@@ -711,26 +706,14 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         return Float(pixel[0]) / 255.0
     }
 
-    // MARK: - 후처리 (노이즈 리덕션 + 샤프닝)
+    // MARK: - 후처리 (샤프닝)
 
     private nonisolated func applyPostProcessing(to image: CIImage) -> CIImage {
-        var result = image
-
-        // 노이즈 리덕션 (미세하게 - 과도한 스무딩 방지)
-        if let noiseFilter = CIFilter(name: "CINoiseReduction") {
-            noiseFilter.setValue(result, forKey: kCIInputImageKey)
-            noiseFilter.setValue(0.02, forKey: "inputNoiseLevel")
-            noiseFilter.setValue(0.4, forKey: "inputSharpness")
-            result = noiseFilter.outputImage ?? result
-        }
-
         // 루미넌스 샤프닝 (색상 변화 없이 디테일만 강화)
-        if let sharpenFilter = CIFilter(name: "CISharpenLuminance") {
-            sharpenFilter.setValue(result, forKey: kCIInputImageKey)
-            sharpenFilter.setValue(0.4, forKey: kCIInputSharpnessKey)
-            result = sharpenFilter.outputImage ?? result
-        }
-
-        return result
+        // CINoiseReduction 제거: 선명도 기반 최적 프레임 선택으로 이미 대체됨 (~50ms 절약)
+        guard let sharpenFilter = CIFilter(name: "CISharpenLuminance") else { return image }
+        sharpenFilter.setValue(image, forKey: kCIInputImageKey)
+        sharpenFilter.setValue(0.4, forKey: kCIInputSharpnessKey)
+        return sharpenFilter.outputImage ?? image
     }
 }
