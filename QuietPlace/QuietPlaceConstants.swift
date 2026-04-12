@@ -120,6 +120,9 @@ enum AppConstants {
 
         /// 촬영 시 스킵할 초기 프레임 수 (스태빌라이제이션 버퍼 채움 대기)
         static let captureSkipFrames: Int = 3
+
+        /// 카메라 전환 시 프리뷰를 가려둘 최소 시간
+        static let cameraSwitchOverlayHoldDuration: TimeInterval = 0.45
     }
     
     // MARK: - UserDefaults Keys

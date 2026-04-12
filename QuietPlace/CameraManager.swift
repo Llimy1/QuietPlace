@@ -42,9 +42,6 @@ class CameraManager: NSObject, ObservableObject {
     nonisolated(unsafe) private var frameBuffer: [CIImage] = []
     nonisolated(unsafe) private var framesSkipped: Int = 0
 
-    // 카메라 전환 상태 (captureOutput에서 첫 프레임 수신 시 리셋)
-    nonisolated(unsafe) private var _isSwitchingCamera = false
-
     // ⚡️ 재사용 가능한 CIContext (Display P3 광색역, GPU 렌더링)
     nonisolated(unsafe) private let ciContext: CIContext = {
         let colorSpace = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
@@ -83,7 +80,7 @@ class CameraManager: NSObject, ObservableObject {
             captureLock.unlock()
         }
     }
-    
+
     private override init() {
         super.init()
     }
@@ -233,7 +230,6 @@ class CameraManager: NSObject, ObservableObject {
     func switchCamera() {
         // MainActor에서 즉시 오버레이 활성화 (sessionQueue 디스패치 전에 UI 업데이트)
         isSwitchingCamera = true
-        _isSwitchingCamera = true
 
         let currentZoomFactor = self.currentZoomFactor
         let stabilizationEnabled = SettingsManager.shared.isStabilizationEnabled
@@ -251,17 +247,25 @@ class CameraManager: NSObject, ObservableObject {
 
             do {
                 let newInput = try AVCaptureDeviceInput(device: newDevice)
+                let currentInput = self.videoDeviceInput
 
                 self.session.beginConfiguration()
 
-                if let currentInput = self.videoDeviceInput {
+                if let currentInput {
                     self.session.removeInput(currentInput)
                 }
 
-                if self.session.canAddInput(newInput) {
-                    self.session.addInput(newInput)
-                    self.videoDeviceInput = newInput
+                guard self.session.canAddInput(newInput) else {
+                    if let currentInput, self.session.canAddInput(currentInput) {
+                        self.session.addInput(currentInput)
+                    }
+                    self.session.commitConfiguration()
+                    Task { @MainActor in self.isSwitchingCamera = false }
+                    return
                 }
+
+                self.session.addInput(newInput)
+                self.videoDeviceInput = newInput
 
                 self.session.commitConfiguration()
                 self.configureVideoStabilization(
@@ -274,6 +278,17 @@ class CameraManager: NSObject, ObservableObject {
                 Task { @MainActor in
                     self.isUsingFrontCamera = (newPosition == .front)
                     self.currentZoomFactor = appliedZoomFactor
+                }
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(
+                        nanoseconds: UInt64(
+                            AppConstants.Camera.cameraSwitchOverlayHoldDuration * 1_000_000_000
+                        )
+                    )
+                    guard let self else { return }
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        self.isSwitchingCamera = false
+                    }
                 }
             } catch {
                 debugPrint("❌ Camera switch failed: \(error)")
@@ -578,16 +593,6 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         if !isFrameReady {
             isFrameReady = true
             debugPrint("✅ First frame ready!")
-        }
-
-        // 카메라 전환 후 첫 프레임 수신 → 오버레이 페이드아웃
-        if _isSwitchingCamera {
-            _isSwitchingCamera = false
-            Task { @MainActor in
-                withAnimation(.easeOut(duration: 0.25)) {
-                    self.isSwitchingCamera = false
-                }
-            }
         }
 
         guard isCapturingPhoto else { return }
