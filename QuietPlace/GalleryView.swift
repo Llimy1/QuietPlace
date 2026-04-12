@@ -326,7 +326,7 @@ struct SelectablePhotoGrid: View {
     }
 
     private var dragSelectionGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .named(coordinateSpaceName))
+        DragGesture(minimumDistance: 10, coordinateSpace: .named(coordinateSpaceName))
             .onChanged { value in
                 guard isSelectionMode else { return }
                 guard let mode = beginDragSelectionIfNeeded(at: value.startLocation) else { return }

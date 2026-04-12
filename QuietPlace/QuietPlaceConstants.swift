@@ -114,6 +114,12 @@ enum AppConstants {
 
         /// 줌 인디케이터 표시 유지 시간
         static let zoomIndicatorDismissDelay: TimeInterval = 1.2
+
+        /// 촬영 시 수집할 프레임 수 (선명도 기반 최적 프레임 선택)
+        static let captureFrameCount: Int = 7
+
+        /// 촬영 시 스킵할 초기 프레임 수 (스태빌라이제이션 버퍼 채움 대기)
+        static let captureSkipFrames: Int = 3
     }
     
     // MARK: - UserDefaults Keys

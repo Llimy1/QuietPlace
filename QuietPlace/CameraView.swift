@@ -42,6 +42,13 @@ struct CameraView: View {
                 CameraPreview(session: cameraManager.session)
                     .ignoresSafeArea()
 
+                // 카메라 전환 중 파란 플래시 방지 오버레이 (새 카메라 첫 프레임 수신 시 페이드아웃)
+                Color.black
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                    .opacity(cameraManager.isSwitchingCamera ? 1.0 : 0.0)
+                    .animation(.easeOut(duration: 0.25), value: cameraManager.isSwitchingCamera)
+
                 if !settingsManager.isDisguiseMode && settingsManager.isGridEnabled {
                     CameraGridOverlay()
                         .ignoresSafeArea()

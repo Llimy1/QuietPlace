@@ -304,7 +304,7 @@ import UniformTypeIdentifiers
 extension UIImage {
     /// HEIC 포맷으로 변환 (고품질, 작은 용량)
     /// - Parameter compressionQuality: 압축 품질 (0.0 ~ 1.0, 기본값 0.9 = 높은 품질)
-    func heicData(compressionQuality: CGFloat = 0.9) -> Data? {
+    func heicData(compressionQuality: CGFloat = 0.95) -> Data? {
         guard #available(iOS 11.0, *) else { return nil }
         
         // CGImage로 변환 (알파 채널 제거)

@@ -22,27 +22,37 @@ class CameraManager: NSObject, ObservableObject {
     @Published var isUsingFrontCamera = false
     @Published var currentResolutionLabel = "-"
     @Published var currentZoomFactor: CGFloat = AppConstants.Camera.minimumZoomFactor
-    
+    @Published var isSwitchingCamera = false
+
     // Camera session
     let session = AVCaptureSession()
     private var videoDeviceInput: AVCaptureDeviceInput?
     private let videoOutput = AVCaptureVideoDataOutput()
     private let sessionQueue = DispatchQueue(label: "camera.session")
     private let outputQueue = DispatchQueue(label: "camera.output", qos: .userInteractive)
-    
-    // Capture state (thread-safe)
+
+    // Capture state (thread-safe, captureLock으로 보호)
     nonisolated(unsafe) private var photoContinuation: CheckedContinuation<UIImage?, Error>?
     nonisolated(unsafe) private let captureLock = NSLock()
     nonisolated(unsafe) private var _isCapturingPhoto = false
     nonisolated(unsafe) private var _isFrameReady = false
     nonisolated(unsafe) private var _isFrontCamera = false
-    
-    // ⚡️ 재사용 가능한 CIContext (성능 최적화 - 미리 초기화)
+
+    // 멀티 프레임 수집 (선명도 기반 최적 프레임 선택)
+    nonisolated(unsafe) private var frameBuffer: [CIImage] = []
+    nonisolated(unsafe) private var framesSkipped: Int = 0
+
+    // 카메라 전환 상태 (captureOutput에서 첫 프레임 수신 시 리셋)
+    nonisolated(unsafe) private var _isSwitchingCamera = false
+
+    // ⚡️ 재사용 가능한 CIContext (Display P3 광색역, GPU 렌더링)
     nonisolated(unsafe) private let ciContext: CIContext = {
+        let colorSpace = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
         let options: [CIContextOption: Any] = [
             .useSoftwareRenderer: false,
             .cacheIntermediates: false,
-            .workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+            .workingColorSpace: colorSpace,
+            .outputColorSpace: colorSpace
         ]
         return CIContext(options: options)
     }()
@@ -111,9 +121,13 @@ class CameraManager: NSObject, ObservableObject {
                 
                 self.session.beginConfiguration()
                 
-                // Full HD 해상도 설정
+                // 최고 해상도 설정 (4K 우선, 폴백: 1080p → photo)
                 let resolutionLabel: String
-                if self.session.canSetSessionPreset(.hd1920x1080) {
+                if self.session.canSetSessionPreset(.hd4K3840x2160) {
+                    self.session.sessionPreset = .hd4K3840x2160
+                    resolutionLabel = "4K (3840×2160)"
+                    debugPrint("📸 Using 4K resolution (3840x2160)")
+                } else if self.session.canSetSessionPreset(.hd1920x1080) {
                     self.session.sessionPreset = .hd1920x1080
                     resolutionLabel = "Full HD (1920×1080)"
                     debugPrint("📸 Using Full HD resolution (1920x1080)")
@@ -143,8 +157,9 @@ class CameraManager: NSObject, ObservableObject {
                     if self.session.canAddOutput(self.videoOutput) {
                         self.session.addOutput(self.videoOutput)
                         
+                        // YpCbCr: 4K에서 BGRA 대비 메모리 60% 절약, CIImage 네이티브 포맷
                         self.videoOutput.videoSettings = [
-                            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+                            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
                         ]
                         
                         self.videoOutput.alwaysDiscardsLateVideoFrames = false
@@ -216,38 +231,45 @@ class CameraManager: NSObject, ObservableObject {
     // MARK: - Camera Switch
     
     func switchCamera() {
+        // MainActor에서 즉시 오버레이 활성화 (sessionQueue 디스패치 전에 UI 업데이트)
+        isSwitchingCamera = true
+        _isSwitchingCamera = true
+
         let currentZoomFactor = self.currentZoomFactor
         let stabilizationEnabled = SettingsManager.shared.isStabilizationEnabled
 
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
-            
+
             let currentPosition = self.videoDeviceInput?.device.position ?? .back
             let newPosition: AVCaptureDevice.Position = currentPosition == .back ? .front : .back
-            
-            guard let newDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition) else { return }
-            
+
+            guard let newDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition) else {
+                Task { @MainActor in self.isSwitchingCamera = false }
+                return
+            }
+
             do {
                 let newInput = try AVCaptureDeviceInput(device: newDevice)
-                
+
                 self.session.beginConfiguration()
-                
+
                 if let currentInput = self.videoDeviceInput {
                     self.session.removeInput(currentInput)
                 }
-                
+
                 if self.session.canAddInput(newInput) {
                     self.session.addInput(newInput)
                     self.videoDeviceInput = newInput
                 }
-                
+
                 self.session.commitConfiguration()
                 self.configureVideoStabilization(
                     for: newDevice,
                     enabled: stabilizationEnabled
                 )
                 let appliedZoomFactor = self.applyZoomFactor(currentZoomFactor, to: newDevice)
-                
+
                 self._isFrontCamera = (newPosition == .front)
                 Task { @MainActor in
                     self.isUsingFrontCamera = (newPosition == .front)
@@ -255,6 +277,7 @@ class CameraManager: NSObject, ObservableObject {
                 }
             } catch {
                 debugPrint("❌ Camera switch failed: \(error)")
+                Task { @MainActor in self.isSwitchingCamera = false }
             }
         }
     }
@@ -520,16 +543,17 @@ class CameraManager: NSObject, ObservableObject {
             self.photoContinuation = continuation
             captureLock.unlock()
             
-            // 타임아웃 (1초로 증가 - 안정성 향상)
+            // 타임아웃: skip(3) + collect(7) @ 30fps = ~330ms, 여유 있게 2초
             Task {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                
-                // ⚡️ lock으로 안전하게 체크
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+
                 captureLock.lock()
                 if self.photoContinuation != nil {
                     debugPrint("⚠️ Photo capture timeout")
                     self.photoContinuation?.resume(returning: nil)
                     self.photoContinuation = nil
+                    self.frameBuffer = []
+                    self.framesSkipped = 0
                 }
                 captureLock.unlock()
             }
@@ -550,43 +574,158 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        // ⚡️ 첫 프레임 도착 표시
+        // 첫 프레임 도착 표시
         if !isFrameReady {
             isFrameReady = true
             debugPrint("✅ First frame ready!")
         }
-        
-        // 촬영 중일 때만 프레임 캡처
+
+        // 카메라 전환 후 첫 프레임 수신 → 오버레이 페이드아웃
+        if _isSwitchingCamera {
+            _isSwitchingCamera = false
+            Task { @MainActor in
+                withAnimation(.easeOut(duration: 0.25)) {
+                    self.isSwitchingCamera = false
+                }
+            }
+        }
+
         guard isCapturingPhoto else { return }
-        
-        let frameProcessStartTime = CFAbsoluteTimeGetCurrent()
-        
         guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        
-        // CIImage로 변환
+
         let ciImage = CIImage(cvPixelBuffer: imageBuffer)
-        
-        // ⚡️ 재사용된 CIContext 사용 (성능 향상)
-        guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }
-        
-        let processingElapsed = CFAbsoluteTimeGetCurrent() - frameProcessStartTime
-        debugPrint("🎬 Frame processed in \(String(format: "%.3f", processingElapsed))s")
-        
-        // UIImage 생성 (전면 카메라는 좌우 반전 보정)
+
+        captureLock.lock()
+
+        // 스태빌라이제이션 버퍼가 안정화될 때까지 초기 프레임 스킵
+        if framesSkipped < AppConstants.Camera.captureSkipFrames {
+            framesSkipped += 1
+            captureLock.unlock()
+            return
+        }
+
+        // 프레임 수집
+        frameBuffer.append(ciImage)
+
+        guard frameBuffer.count >= AppConstants.Camera.captureFrameCount else {
+            captureLock.unlock()
+            return
+        }
+
+        // 수집 완료 - 최적 프레임 선택 준비
+        let frames = frameBuffer
+        let continuation = photoContinuation
+        photoContinuation = nil
+        frameBuffer = []
+        framesSkipped = 0
+
+        captureLock.unlock()
+
+        guard let continuation = continuation else { return }
+
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        // 가장 선명한 프레임 선택
+        let bestCIImage = selectSharpestFrame(from: frames)
+
+        // 노이즈 리덕션 + 샤프닝 후처리
+        let processedCIImage = applyPostProcessing(to: bestCIImage)
+
+        // Display P3 색공간으로 렌더링
+        let p3ColorSpace = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
+        guard let cgImage = ciContext.createCGImage(
+            processedCIImage,
+            from: processedCIImage.extent,
+            format: .RGBA8,
+            colorSpace: p3ColorSpace
+        ) else {
+            continuation.resume(returning: nil)
+            return
+        }
+
+        let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+        debugPrint("✅ Best frame selected & processed in \(String(format: "%.3f", elapsed))s")
+
         let orientation: UIImage.Orientation = _isFrontCamera ? .leftMirrored : .right
         let image = UIImage(cgImage: cgImage, scale: 1.0, orientation: orientation)
-        
-        // ⚡️ lock으로 안전하게 continuation resume (MainActor 오버헤드 제거)
-        captureLock.lock()
-        if let continuation = photoContinuation {
-            photoContinuation = nil
-            captureLock.unlock()
-            
-            debugPrint("✅ Resuming continuation with image")
-            // continuation은 이미 MainActor context에서 생성되었으므로 안전
-            continuation.resume(returning: image)
-        } else {
-            captureLock.unlock()
+        continuation.resume(returning: image)
+    }
+
+    // MARK: - 선명도 기반 최적 프레임 선택
+
+    private nonisolated func selectSharpestFrame(from frames: [CIImage]) -> CIImage {
+        var bestFrame = frames[0]
+        var bestScore: Float = -1
+
+        for (index, frame) in frames.enumerated() {
+            let score = calculateSharpness(of: frame)
+            debugPrint("🔍 Frame \(index) sharpness: \(String(format: "%.4f", score))")
+            if score > bestScore {
+                bestScore = score
+                bestFrame = frame
+            }
         }
+
+        debugPrint("🎯 Best sharpness score: \(String(format: "%.4f", bestScore))")
+        return bestFrame
+    }
+
+    /// Laplacian 엣지 기반 선명도 점수 (높을수록 선명)
+    private nonisolated func calculateSharpness(of image: CIImage) -> Float {
+        // 연산 속도를 위해 25% 크기로 다운샘플
+        let scaled = image.transformed(by: CGAffineTransform(scaleX: 0.25, y: 0.25))
+
+        // 그레이스케일 변환
+        guard let grayscaleFilter = CIFilter(name: "CIColorControls") else { return 0 }
+        grayscaleFilter.setValue(scaled, forKey: kCIInputImageKey)
+        grayscaleFilter.setValue(0.0, forKey: kCIInputSaturationKey)
+        guard let gray = grayscaleFilter.outputImage else { return 0 }
+
+        // 엣지 검출 (Laplacian 근사)
+        guard let edgeFilter = CIFilter(name: "CIEdges") else { return 0 }
+        edgeFilter.setValue(gray, forKey: kCIInputImageKey)
+        edgeFilter.setValue(5.0, forKey: kCIInputIntensityKey)
+        guard let edgeImage = edgeFilter.outputImage else { return 0 }
+
+        // 엣지 이미지 평균값 = 선명도 점수
+        guard let avgFilter = CIFilter(name: "CIAreaAverage") else { return 0 }
+        avgFilter.setValue(edgeImage, forKey: kCIInputImageKey)
+        avgFilter.setValue(CIVector(cgRect: edgeImage.extent), forKey: kCIInputExtentKey)
+        guard let avgOutput = avgFilter.outputImage else { return 0 }
+
+        var pixel = [UInt8](repeating: 0, count: 4)
+        ciContext.render(
+            avgOutput,
+            toBitmap: &pixel,
+            rowBytes: 4,
+            bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+            format: .RGBA8,
+            colorSpace: CGColorSpaceCreateDeviceRGB()
+        )
+
+        return Float(pixel[0]) / 255.0
+    }
+
+    // MARK: - 후처리 (노이즈 리덕션 + 샤프닝)
+
+    private nonisolated func applyPostProcessing(to image: CIImage) -> CIImage {
+        var result = image
+
+        // 노이즈 리덕션 (미세하게 - 과도한 스무딩 방지)
+        if let noiseFilter = CIFilter(name: "CINoiseReduction") {
+            noiseFilter.setValue(result, forKey: kCIInputImageKey)
+            noiseFilter.setValue(0.02, forKey: "inputNoiseLevel")
+            noiseFilter.setValue(0.4, forKey: "inputSharpness")
+            result = noiseFilter.outputImage ?? result
+        }
+
+        // 루미넌스 샤프닝 (색상 변화 없이 디테일만 강화)
+        if let sharpenFilter = CIFilter(name: "CISharpenLuminance") {
+            sharpenFilter.setValue(result, forKey: kCIInputImageKey)
+            sharpenFilter.setValue(0.4, forKey: kCIInputSharpnessKey)
+            result = sharpenFilter.outputImage ?? result
+        }
+
+        return result
     }
 }
