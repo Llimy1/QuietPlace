@@ -17,6 +17,21 @@ enum AppConstants {
         static let name = "QuietPlace"
         static let supportEmail = "llimy.mh@gmail.com"
         static let privacyPolicyURL = "https://llimy1.github.io/QuietPlace/privacy.html"
+        static let appStoreID = "6761469819"
+        static let appStoreCountryCode = "kr"
+        static let appStoreURL = "https://apps.apple.com/app/id6761469819"
+    }
+
+    // MARK: - Debug
+
+    enum Debug {
+        #if DEBUG
+        static let forceUpdatePrompt = false
+        static let forcedUpdateVersion = "9.9.9"
+        #else
+        static let forceUpdatePrompt = false
+        static let forcedUpdateVersion = ""
+        #endif
     }
     
     // MARK: - Timing
@@ -33,6 +48,15 @@ enum AppConstants {
         
         /// 사진 촬영 타임아웃 (초)
         static let photoCaptureTimeout: TimeInterval = 3.0
+
+        /// 앱 업데이트 확인 전 대기 시간 (초)
+        static let appUpdatePromptDelay: TimeInterval = 2.5
+
+        /// 앱 업데이트 재확인 최소 간격 (초)
+        static let appUpdateCheckInterval: TimeInterval = 60 * 60 * 6
+
+        /// 디버그 강제 업데이트 카드 표시 대기 시간 (초)
+        static let debugForcedUpdatePromptDelay: TimeInterval = 0.8
     }
     
     // MARK: - UI
@@ -89,6 +113,7 @@ enum AppConstants {
         static let isFirstLaunch = "isFirstLaunch"
         static let previewScale = "previewScale"
         static let tapToCapture = "tapToCapture"
+        static let skippedAppStoreVersion = "skippedAppStoreVersion"
     }
     
     // MARK: - Ads

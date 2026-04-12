@@ -15,6 +15,8 @@ struct ContentView: View {
     @State private var showPermissionAlert = false
     @State private var permissionAlertMessage = ""
     @State private var showSplash = true
+    @StateObject private var appUpdateManager = AppUpdateManager()
+    @State private var updateCheckTask: Task<Void, Never>?
     @Environment(\.scenePhase) private var scenePhase
     
     var body: some View {
@@ -36,7 +38,32 @@ struct ContentView: View {
                     .transition(.opacity)
                     .zIndex(1000)
             }
+
+            if let availableUpdate = appUpdateManager.availableUpdate,
+               !isFirstLaunch,
+               !showSplash {
+                Color.black.opacity(0.55)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .zIndex(1001)
+
+                AppUpdatePromptCard(
+                    version: availableUpdate.version,
+                    onLater: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            appUpdateManager.dismissUpdatePrompt()
+                        }
+                    },
+                    onUpdate: {
+                        appUpdateManager.openAppStoreForUpdate()
+                    }
+                )
+                .padding(.horizontal, 24)
+                .transition(.scale(scale: 0.96).combined(with: .opacity))
+                .zIndex(1002)
+            }
         }
+        .animation(.easeInOut(duration: 0.2), value: appUpdateManager.availableUpdate != nil)
         .task {
             if isFirstLaunch && !hasRequestedPermissions {
                 hasRequestedPermissions = true
@@ -46,6 +73,7 @@ struct ContentView: View {
         .onAppear {
             if !isFirstLaunch {
                 checkPermissions()
+                scheduleUpdateCheck()
             }
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
@@ -57,7 +85,13 @@ struct ContentView: View {
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .active && !isFirstLaunch {
                 checkPermissions()
+                scheduleUpdateCheck()
+            } else if newPhase != .active {
+                cancelUpdateCheck()
             }
+        }
+        .onDisappear {
+            cancelUpdateCheck()
         }
         .alert("권한 필요", isPresented: $showPermissionAlert) {
             Button("설정 열기") {
@@ -101,6 +135,26 @@ struct ContentView: View {
         if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
             UIApplication.shared.open(settingsURL)
         }
+    }
+
+    private func scheduleUpdateCheck() {
+        guard !isFirstLaunch else { return }
+
+        updateCheckTask?.cancel()
+        updateCheckTask = Task {
+            let promptDelay = AppConstants.Debug.forceUpdatePrompt
+                ? AppConstants.Timing.debugForcedUpdatePromptDelay
+                : AppConstants.Timing.appUpdatePromptDelay
+            let delay = UInt64(promptDelay * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled else { return }
+            await appUpdateManager.checkForUpdateIfNeeded()
+        }
+    }
+
+    private func cancelUpdateCheck() {
+        updateCheckTask?.cancel()
+        updateCheckTask = nil
     }
     
     // MARK: - 권한 요청
@@ -151,6 +205,59 @@ struct ContentView: View {
         @unknown default:
             break
         }
+    }
+}
+
+private struct AppUpdatePromptCard: View {
+    let version: String
+    let onLater: () -> Void
+    let onUpdate: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("새 버전이 있어요")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(.white)
+
+                Text("QuietPlace \(version) 업데이트가 준비됐어요.\n더 안정적인 촬영 경험을 위해 업데이트해보세요.")
+                    .font(.system(size: 15))
+                    .foregroundColor(.white.opacity(0.82))
+                    .lineSpacing(3)
+            }
+
+            HStack(spacing: 12) {
+                Button(action: onLater) {
+                    Text("나중에")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.9))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+
+                Button(action: onUpdate) {
+                    Text("업데이트하기")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundColor(.black)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+            }
+        }
+        .padding(24)
+        .background(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(Color.black.opacity(0.92))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.3), radius: 24, y: 12)
     }
 }
 
