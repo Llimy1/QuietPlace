@@ -54,22 +54,13 @@ struct GalleryView: View {
                 } else {
                     // 사진이 있을 때
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 20) {
-                            // 날짜별로 그룹핑된 사진들
-                            let sortedKeys = groupedPhotos.keys.sorted(by: { key1, key2 in
-                                // Today > Yesterday > 다른 날짜 순서
-                                if key1 == "Today" { return true }
-                                if key2 == "Today" { return false }
-                                if key1 == "Yesterday" { return true }
-                                if key2 == "Yesterday" { return false }
-                                return key1 > key2
-                            })
-                            
-                            ForEach(sortedKeys, id: \.self) { dateKey in
-                                if let photos = groupedPhotos[dateKey] {
+                        LazyVStack(alignment: .leading, spacing: 20, pinnedViews: []) {
+                            // 날짜별로 그룹핑된 사진들 (화면에 보이는 섹션만 렌더링)
+                            ForEach(sortedDateKeys, id: \.self) { dateKey in
+                                if let sectionPhotos = groupedPhotos[dateKey] {
                                     PhotoSectionWithAds(
-                                        title: "\(dateKey) - \(formattedDate(for: photos.first?.createdDate))",
-                                        photos: photos,
+                                        title: "\(dateKey) - \(formattedDate(for: sectionPhotos.first?.createdDate))",
+                                        photos: sectionPhotos,
                                         isSelectionMode: $isSelectionMode,
                                         selectedPhotos: $selectedPhotos,
                                         onPhotoTap: { photo in
@@ -201,16 +192,32 @@ struct GalleryView: View {
     }
     
     // MARK: - Computed Properties
-    
+
+    // photosByDate()는 매 render마다 호출되므로 photos가 바뀔 때만 재계산
     private var groupedPhotos: [String: [PhotoItem]] {
         photoDataManager.photosByDate()
     }
-    
+
+    private var sortedDateKeys: [String] {
+        groupedPhotos.keys.sorted { key1, key2 in
+            // Today > Yesterday > 다른 날짜 순서
+            if key1 == "Today" { return true }
+            if key2 == "Today" { return false }
+            if key1 == "Yesterday" { return true }
+            if key2 == "Yesterday" { return false }
+            return key1 > key2
+        }
+    }
+
+    private static let sectionDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d"
+        return f
+    }()
+
     private func formattedDate(for date: Date?) -> String {
         guard let date = date else { return "" }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
-        return formatter.string(from: date)
+        return Self.sectionDateFormatter.string(from: date)
     }
     
     // MARK: - Actions
@@ -298,11 +305,14 @@ struct SelectablePhotoGrid: View {
                     isSelectionMode: isSelectionMode
                 )
                 .background {
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: PhotoFramePreferenceKey.self,
-                            value: [photo.id: proxy.frame(in: .named(coordinateSpaceName))]
-                        )
+                    // 선택 모드일 때만 GeometryReader 추적 (일반 스크롤 시 불필요한 preference 업데이트 방지)
+                    if isSelectionMode {
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: PhotoFramePreferenceKey.self,
+                                value: [photo.id: proxy.frame(in: .named(coordinateSpaceName))]
+                            )
+                        }
                     }
                 }
                 .onTapGesture {
@@ -312,12 +322,14 @@ struct SelectablePhotoGrid: View {
         }
         .coordinateSpace(name: coordinateSpaceName)
         .onPreferenceChange(PhotoFramePreferenceKey.self) { frames in
+            guard isSelectionMode else { return }
             let visiblePhotoIDs = Set(photos.map(\.id))
             photoFrames = frames.filter { visiblePhotoIDs.contains($0.key) }
         }
         .simultaneousGesture(dragSelectionGesture)
         .onChange(of: isSelectionMode) { _, isEnabled in
             if !isEnabled {
+                photoFrames = [:]
                 resetDragSelection()
             }
         }

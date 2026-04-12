@@ -259,17 +259,20 @@ class PhotoDataManager: ObservableObject {
         return grouped
     }
     
+    private static let groupingDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, yyyy"
+        return f
+    }()
+
     func dateString(from date: Date) -> String {
         let calendar = Calendar.current
-        
         if calendar.isDateInToday(date) {
             return "Today"
         } else if calendar.isDateInYesterday(date) {
             return "Yesterday"
         } else {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MMM d, yyyy"
-            return formatter.string(from: date)
+            return Self.groupingDateFormatter.string(from: date)
         }
     }
 }
