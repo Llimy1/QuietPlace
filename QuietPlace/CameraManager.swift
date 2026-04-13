@@ -32,17 +32,13 @@ class CameraManager: NSObject, ObservableObject {
     private let outputQueue = DispatchQueue(label: "camera.output", qos: .userInteractive)
 
     // Capture state (thread-safe, captureLock으로 보호)
-    nonisolated(unsafe) private var photoContinuation: CheckedContinuation<UIImage?, Error>?
     nonisolated(unsafe) private let captureLock = NSLock()
     nonisolated(unsafe) private var _isCapturingPhoto = false
     nonisolated(unsafe) private var _isFrameReady = false
     nonisolated(unsafe) private var _isFrontCamera = false
 
-    // 스트리밍 선명도 계산 (프레임 도착 즉시 계산, lock으로 보호)
-    nonisolated(unsafe) private var bestFrame: CIImage? = nil
-    nonisolated(unsafe) private var bestScore: Float = -1
-    nonisolated(unsafe) private var framesCollected: Int = 0
-    nonisolated(unsafe) private var framesSkipped: Int = 0
+    // 최근 프레임 버퍼 (셔터 직전 프레임들에서 즉시 선택)
+    nonisolated(unsafe) private var recentFrameBuffer: [CVPixelBuffer] = []
 
     // ⚡️ 재사용 가능한 CIContext (Display P3 광색역, GPU 렌더링)
     nonisolated(unsafe) private let ciContext: CIContext = {
@@ -161,7 +157,8 @@ class CameraManager: NSObject, ObservableObject {
                             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
                         ]
                         
-                        self.videoOutput.alwaysDiscardsLateVideoFrames = false
+                        // 최근 프레임 버퍼 캡처에서는 오래된 프레임을 버리고 최신 프레임 유지가 유리함
+                        self.videoOutput.alwaysDiscardsLateVideoFrames = true
                         self.videoOutput.setSampleBufferDelegate(self, queue: self.outputQueue)
                         
                         self.configureVideoStabilization(
@@ -232,6 +229,7 @@ class CameraManager: NSObject, ObservableObject {
     func switchCamera() {
         // MainActor에서 즉시 오버레이 활성화 (sessionQueue 디스패치 전에 UI 업데이트)
         isSwitchingCamera = true
+        resetRecentFrameBuffer()
 
         let currentZoomFactor = self.currentZoomFactor
         let stabilizationEnabled = SettingsManager.shared.isStabilizationEnabled
@@ -313,7 +311,8 @@ class CameraManager: NSObject, ObservableObject {
                 }
                 return
             }
-            
+
+            self.resetRecentFrameBuffer()
             self.session.startRunning()
             
             if let device = self.videoDeviceInput?.device {
@@ -335,6 +334,7 @@ class CameraManager: NSObject, ObservableObject {
             
             if self.session.isRunning {
                 self.session.stopRunning()
+                self.resetRecentFrameBuffer()
                 
                 Task { @MainActor in
                     self.isSessionRunning = false
@@ -553,28 +553,47 @@ class CameraManager: NSObject, ObservableObject {
         
         isCapturingPhoto = true
         defer { isCapturingPhoto = false }
-        
-        let result = try await withCheckedThrowingContinuation { continuation in
-            // ⚡️ continuation을 nonisolated(unsafe) 변수에 직접 할당 (MainActor 오버헤드 제거)
-            captureLock.lock()
-            self.photoContinuation = continuation
-            captureLock.unlock()
-            
-            // 타임아웃: skip(1) + collect(5) @ 30fps = ~200ms, 여유 있게 1초
-            Task {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
 
-                captureLock.lock()
-                if self.photoContinuation != nil {
-                    debugPrint("⚠️ Photo capture timeout")
-                    self.photoContinuation?.resume(returning: nil)
-                    self.photoContinuation = nil
-                    self.bestFrame = nil
-                    self.bestScore = -1
-                    self.framesCollected = 0
-                    self.framesSkipped = 0
+        captureLock.lock()
+        let bufferedFrames = recentFrameBuffer
+        captureLock.unlock()
+
+        guard !bufferedFrames.isEmpty else {
+            debugPrint("⚠️ No buffered frames available for capture")
+            return nil
+        }
+
+        let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UIImage?, Error>) in
+            self.outputQueue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume(returning: nil)
+                    return
                 }
-                captureLock.unlock()
+
+                guard let selectedFrame = self.selectSharpestFrame(from: bufferedFrames) else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+
+                let startTime = CFAbsoluteTimeGetCurrent()
+                let processedCIImage = self.applyPostProcessing(to: selectedFrame)
+                let p3ColorSpace = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
+
+                guard let cgImage = self.ciContext.createCGImage(
+                    processedCIImage,
+                    from: processedCIImage.extent,
+                    format: .RGBA8,
+                    colorSpace: p3ColorSpace
+                ) else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+
+                debugPrint("✅ Buffered capture processed in \(String(format: "%.3f", CFAbsoluteTimeGetCurrent() - startTime))s")
+
+                let orientation: UIImage.Orientation = self._isFrontCamera ? .leftMirrored : .right
+                let image = UIImage(cgImage: cgImage, scale: 1.0, orientation: orientation)
+                continuation.resume(returning: image)
             }
         }
         
@@ -599,75 +618,43 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
             debugPrint("✅ First frame ready!")
         }
 
-        guard isCapturingPhoto else { return }
         guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        appendRecentFrame(imageBuffer)
+    }
 
-        let ciImage = CIImage(cvPixelBuffer: imageBuffer)
-
-        // 스킵 체크 (lock 최소 보유)
+    private nonisolated func appendRecentFrame(_ imageBuffer: CVPixelBuffer) {
         captureLock.lock()
-        if framesSkipped < AppConstants.Camera.captureSkipFrames {
-            framesSkipped += 1
-            captureLock.unlock()
-            return
+        recentFrameBuffer.append(imageBuffer)
+        let overflowCount = recentFrameBuffer.count - AppConstants.Camera.recentFrameBufferSize
+        if overflowCount > 0 {
+            recentFrameBuffer.removeFirst(overflowCount)
         }
         captureLock.unlock()
+    }
 
-        // 선명도 계산 (lock 없이, 프레임 대기 시간과 병렬 실행)
-        let score = calculateSharpness(of: ciImage)
-
-        // 결과 반영 (lock 최소 구간으로 재진입)
+    private nonisolated func resetRecentFrameBuffer() {
         captureLock.lock()
-
-        if score > bestScore {
-            bestScore = score
-            bestFrame = ciImage
-        }
-        framesCollected += 1
-
-        guard framesCollected >= AppConstants.Camera.captureFrameCount else {
-            captureLock.unlock()
-            return
-        }
-
-        // 수집 완료 - 최적 프레임 추출
-        let selectedFrame = bestFrame
-        let continuation = photoContinuation
-        photoContinuation = nil
-        bestFrame = nil
-        bestScore = -1
-        framesCollected = 0
-        framesSkipped = 0
-
+        recentFrameBuffer.removeAll(keepingCapacity: true)
+        _isFrameReady = false
         captureLock.unlock()
+    }
 
-        guard let continuation = continuation, let selectedFrame = selectedFrame else {
-            continuation?.resume(returning: nil)
-            return
+    private nonisolated func selectSharpestFrame(from buffers: [CVPixelBuffer]) -> CIImage? {
+        guard !buffers.isEmpty else { return nil }
+
+        var bestFrame: CIImage?
+        var bestScore: Float = -1
+
+        for buffer in buffers {
+            let image = CIImage(cvPixelBuffer: buffer)
+            let score = calculateSharpness(of: image)
+            if score > bestScore {
+                bestScore = score
+                bestFrame = image
+            }
         }
 
-        let startTime = CFAbsoluteTimeGetCurrent()
-
-        // 샤프닝만 적용 (선명도 선택으로 노이즈 프레임은 이미 걸러짐)
-        let processedCIImage = applyPostProcessing(to: selectedFrame)
-
-        // Display P3 색공간으로 렌더링
-        let p3ColorSpace = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
-        guard let cgImage = ciContext.createCGImage(
-            processedCIImage,
-            from: processedCIImage.extent,
-            format: .RGBA8,
-            colorSpace: p3ColorSpace
-        ) else {
-            continuation.resume(returning: nil)
-            return
-        }
-
-        debugPrint("✅ Post-processing done in \(String(format: "%.3f", CFAbsoluteTimeGetCurrent() - startTime))s")
-
-        let orientation: UIImage.Orientation = _isFrontCamera ? .leftMirrored : .right
-        let image = UIImage(cgImage: cgImage, scale: 1.0, orientation: orientation)
-        continuation.resume(returning: image)
+        return bestFrame
     }
 
     /// Laplacian 엣지 기반 선명도 점수 (높을수록 선명)
