@@ -11,7 +11,7 @@ import GoogleMobileAds
 struct BannerAdView: UIViewRepresentable {
     let adUnitID: String
     
-    init(adUnitID: String = AdManager.bannerAdUnitID) {
+    @MainActor init(adUnitID: String = AdManager.bannerAdUnitID) {
         self.adUnitID = adUnitID
     }
     

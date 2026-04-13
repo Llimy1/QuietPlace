@@ -98,7 +98,8 @@ struct GalleryView: View {
                         onDelete: deleteSelectedPhotos,
                         onDownload: downloadSelectedPhotos
                     )
-                    .padding(.bottom, 70) // 배너 광고 위에 표시
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, AppConstants.Ads.bannerHeight)
                 }
             }
         }
@@ -272,19 +273,6 @@ struct GalleryView: View {
     }
 }
 
-private enum DragSelectionMode {
-    case select
-    case deselect
-}
-
-private struct PhotoFramePreferenceKey: PreferenceKey {
-    static var defaultValue: [String: CGRect] = [:]
-
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
-        value.merge(nextValue(), uniquingKeysWith: { $1 })
-    }
-}
-
 struct SelectablePhotoGrid: View {
     let photos: [PhotoItem]
     @Binding var isSelectionMode: Bool
@@ -297,12 +285,6 @@ struct SelectablePhotoGrid: View {
         GridItem(.flexible(), spacing: 2)
     ]
 
-    @State private var photoFrames: [String: CGRect] = [:]
-    @State private var dragSelectionMode: DragSelectionMode?
-    @State private var handledPhotoIDs: Set<String> = []
-    @State private var lastDragLocation: CGPoint?
-    @State private var coordinateSpaceName = UUID().uuidString
-
     var body: some View {
         LazyVGrid(columns: columns, spacing: 2) {
             ForEach(photos) { photo in
@@ -311,50 +293,11 @@ struct SelectablePhotoGrid: View {
                     isSelected: selectedPhotos.contains(photo.id),
                     isSelectionMode: isSelectionMode
                 )
-                .background {
-                    // 선택 모드일 때만 GeometryReader 추적 (일반 스크롤 시 불필요한 preference 업데이트 방지)
-                    if isSelectionMode {
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: PhotoFramePreferenceKey.self,
-                                value: [photo.id: proxy.frame(in: .named(coordinateSpaceName))]
-                            )
-                        }
-                    }
-                }
                 .onTapGesture {
                     handlePhotoTap(photo)
                 }
             }
         }
-        .coordinateSpace(name: coordinateSpaceName)
-        .onPreferenceChange(PhotoFramePreferenceKey.self) { frames in
-            guard isSelectionMode else { return }
-            let visiblePhotoIDs = Set(photos.map(\.id))
-            photoFrames = frames.filter { visiblePhotoIDs.contains($0.key) }
-        }
-        .simultaneousGesture(dragSelectionGesture)
-        .onChange(of: isSelectionMode) { _, isEnabled in
-            if !isEnabled {
-                photoFrames = [:]
-                resetDragSelection()
-            }
-        }
-    }
-
-    private var dragSelectionGesture: some Gesture {
-        DragGesture(minimumDistance: 10, coordinateSpace: .named(coordinateSpaceName))
-            .onChanged { value in
-                guard isSelectionMode else { return }
-                guard let mode = beginDragSelectionIfNeeded(at: value.startLocation) else { return }
-
-                let startPoint = lastDragLocation ?? value.startLocation
-                updateDragSelection(from: startPoint, to: value.location, mode: mode)
-                lastDragLocation = value.location
-            }
-            .onEnded { _ in
-                resetDragSelection()
-            }
     }
 
     private func handlePhotoTap(_ photo: PhotoItem) {
@@ -371,59 +314,6 @@ struct SelectablePhotoGrid: View {
         } else {
             selectedPhotos.insert(photoID)
         }
-    }
-
-    private func beginDragSelectionIfNeeded(at startLocation: CGPoint) -> DragSelectionMode? {
-        if let dragSelectionMode {
-            return dragSelectionMode
-        }
-
-        guard let photoID = photoID(at: startLocation) else { return nil }
-        let mode: DragSelectionMode = selectedPhotos.contains(photoID) ? .deselect : .select
-        dragSelectionMode = mode
-        applyDragSelection(to: [photoID], mode: mode)
-        return mode
-    }
-
-    private func updateDragSelection(from start: CGPoint, to end: CGPoint, mode: DragSelectionMode) {
-        let sweepRect = CGRect(
-            x: min(start.x, end.x),
-            y: min(start.y, end.y),
-            width: max(abs(end.x - start.x), 1),
-            height: max(abs(end.y - start.y), 1)
-        )
-        .insetBy(dx: -8, dy: -8)
-
-        let touchedPhotoIDs = photoFrames.compactMap { photoID, frame in
-            frame.intersects(sweepRect) ? photoID : nil
-        }
-
-        applyDragSelection(to: touchedPhotoIDs, mode: mode)
-    }
-
-    private func applyDragSelection(to photoIDs: [String], mode: DragSelectionMode) {
-        for photoID in photoIDs {
-            guard handledPhotoIDs.insert(photoID).inserted else { continue }
-
-            switch mode {
-            case .select:
-                selectedPhotos.insert(photoID)
-            case .deselect:
-                selectedPhotos.remove(photoID)
-            }
-        }
-    }
-
-    private func photoID(at location: CGPoint) -> String? {
-        photoFrames.first(where: { _, frame in
-            frame.contains(location)
-        })?.key
-    }
-
-    private func resetDragSelection() {
-        dragSelectionMode = nil
-        handledPhotoIDs.removeAll()
-        lastDragLocation = nil
     }
 }
 
@@ -516,8 +406,14 @@ struct PhotoThumbnail: View {
     @State private var thumbnail: UIImage?
     @State private var isLoading = true
     
+    private var currentScreen: UIScreen? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.screen
+    }
+
     private var cellSize: CGFloat {
-        (UIScreen.main.bounds.width - 4) / 3  // spacing 2 × 2 = 4
+        ((currentScreen?.bounds.width ?? 390) - 4) / 3  // spacing 2 × 2 = 4
     }
     
     var body: some View {
@@ -590,8 +486,8 @@ struct PhotoThumbnail: View {
     private func loadThumbnail() {
         guard thumbnail == nil else { return }
 
-        let screenWidth = UIScreen.main.bounds.width
-        let scale = UIScreen.main.scale
+        let screenWidth = currentScreen?.bounds.width ?? 390
+        let scale = currentScreen?.scale ?? 3
         let thumbnailSize = (screenWidth / 3) * scale
         let size = CGSize(width: thumbnailSize, height: thumbnailSize)
         let photoItem = photo
@@ -604,12 +500,10 @@ struct PhotoThumbnail: View {
         }
 
         // 디스크 I/O는 백그라운드에서 (.utility: 메인스레드 경쟁 방지)
-        Task.detached(priority: .utility) {
-            let image = photoItem.getThumbnail(size: size)
-            await MainActor.run {
-                thumbnail = image
-                isLoading = false
-            }
+        Task(priority: .utility) {
+            let image = await photoItem.getThumbnailAsync(size: size)
+            thumbnail = image
+            isLoading = false
         }
     }
 }
@@ -621,43 +515,41 @@ struct SelectionActionBar: View {
     let onDownload: () -> Void
     
     var body: some View {
-        VStack(spacing: 0) {
+        HStack(spacing: 12) {
             Text("\(selectedCount)장 선택됨")
-                .font(.system(size: 13, weight: .regular))
-                .foregroundColor(.secondary)
-                .padding(.top, 12)
-            
-            HStack(spacing: 0) {
-                Button(action: onDelete) {
-                    VStack(spacing: 4) {
-                        Image(systemName: "trash.fill")
-                            .font(.system(size: 24))
-                        Text("삭제")
-                            .font(.system(size: 13))
-                    }
-                    .foregroundColor(.red)
-                    .frame(maxWidth: .infinity)
-                }
-                
-                Divider()
-                    .frame(height: 50)
-                
-                Button(action: onDownload) {
-                    VStack(spacing: 4) {
-                        Image(systemName: "arrow.down.circle.fill")
-                            .font(.system(size: 24))
-                        Text("저장")
-                            .font(.system(size: 13))
-                    }
-                    .foregroundColor(.blue)
-                    .frame(maxWidth: .infinity)
-                }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: onDelete) {
+                Label("삭제", systemImage: "trash.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Color.red.opacity(0.9))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
             }
-            .padding(.vertical, 16)
+
+            Button(action: onDownload) {
+                Label("저장", systemImage: "arrow.down.circle.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Color.blue.opacity(0.9))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .background(
-            .ultraThinMaterial,
-            in: RoundedRectangle(cornerRadius: 0)
+            Color(red: 0.11, green: 0.11, blue: 0.12).opacity(0.96),
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
     }
 }

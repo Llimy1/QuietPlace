@@ -616,7 +616,9 @@ struct CameraView: View {
     
     private func loadLastThumbnail() {
         if let lastPhoto = photoDataManager.photos.first {
-            let scale = UIScreen.main.scale
+            let scale = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first?.screen.scale ?? 3
             let px = 50 * scale  // 카메라 UI 썸네일 버튼은 50pt
             lastThumbnail = lastPhoto.getThumbnail(size: CGSize(width: px, height: px))
         }

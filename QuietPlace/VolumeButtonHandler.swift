@@ -146,10 +146,9 @@ class VolumeButtonHandler: ObservableObject {
         
         observation = audioSession.observe(\.outputVolume, options: [.new, .old]) { [weak self] session, change in
             guard let self = self, let newVolume = change.newValue else { return }
-            
-            debugPrint("🔊 Volume changed: \(self.previousVolume) → \(newVolume)")
-            
+
             Task { @MainActor in
+                debugPrint("🔊 Volume changed: \(self.previousVolume) → \(newVolume)")
                 self.handleVolumeChange(newVolume)
             }
         }
@@ -206,7 +205,10 @@ class VolumeButtonHandler: ObservableObject {
         observation = nil
         
         // Remove hidden volume view
-        hiddenVolumeView?.removeFromSuperview()
+        let viewToRemove = hiddenVolumeView
+        DispatchQueue.main.async {
+            viewToRemove?.removeFromSuperview()
+        }
         hiddenVolumeView = nil
         
         // Deactivate audio session synchronously
@@ -217,4 +219,3 @@ class VolumeButtonHandler: ObservableObject {
         volumeView = nil
     }
 }
-

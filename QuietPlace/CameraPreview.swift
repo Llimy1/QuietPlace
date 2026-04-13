@@ -15,7 +15,9 @@ struct CameraPreview: UIViewRepresentable {
         let view = PreviewView()
         view.videoPreviewLayer.session = session
         view.videoPreviewLayer.videoGravity = .resizeAspectFill
-        view.videoPreviewLayer.connection?.videoOrientation = .portrait
+        if let connection = view.videoPreviewLayer.connection {
+            applyPortraitOrientation(to: connection)
+        }
         
         // ⚡️ 렌더링 최적화
         view.videoPreviewLayer.isOpaque = true
@@ -32,9 +34,7 @@ struct CameraPreview: UIViewRepresentable {
             
             // 연결 방향 재설정
             if let connection = uiView.videoPreviewLayer.connection {
-                if connection.isVideoOrientationSupported {
-                    connection.videoOrientation = .portrait
-                }
+                applyPortraitOrientation(to: connection)
             }
         }
         // 세션이 nil인 경우에만 재연결
@@ -46,6 +46,16 @@ struct CameraPreview: UIViewRepresentable {
     
     static func dismantleUIView(_ uiView: PreviewView, coordinator: ()) {
         debugPrint("🎥 CameraPreview dismantled")
+    }
+
+    private func applyPortraitOrientation(to connection: AVCaptureConnection) {
+        if #available(iOS 17.0, *) {
+            if connection.isVideoRotationAngleSupported(90) {
+                connection.videoRotationAngle = 90
+            }
+        } else if connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
     }
 }
 

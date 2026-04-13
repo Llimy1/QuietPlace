@@ -25,14 +25,14 @@ class CameraManager: NSObject, ObservableObject {
     @Published var isSwitchingCamera = false
 
     // Camera session
-    let session = AVCaptureSession()
-    private var videoDeviceInput: AVCaptureDeviceInput?
-    private let videoOutput = AVCaptureVideoDataOutput()
+    nonisolated(unsafe) let session = AVCaptureSession()
+    nonisolated(unsafe) private var videoDeviceInput: AVCaptureDeviceInput?
+    nonisolated(unsafe) private let videoOutput = AVCaptureVideoDataOutput()
     private let sessionQueue = DispatchQueue(label: "camera.session")
     private let outputQueue = DispatchQueue(label: "camera.output", qos: .userInteractive)
 
     // Capture state (thread-safe, captureLock으로 보호)
-    nonisolated(unsafe) private let captureLock = NSLock()
+    private let captureLock = NSLock()
     nonisolated(unsafe) private var _isCapturingPhoto = false
     nonisolated(unsafe) private var _isFrameReady = false
     nonisolated(unsafe) private var _isFrontCamera = false
@@ -41,7 +41,7 @@ class CameraManager: NSObject, ObservableObject {
     nonisolated(unsafe) private var recentFrameBuffer: [CVPixelBuffer] = []
 
     // ⚡️ 재사용 가능한 CIContext (Display P3 광색역, GPU 렌더링)
-    nonisolated(unsafe) private let ciContext: CIContext = {
+    private let ciContext: CIContext = {
         let colorSpace = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
         let options: [CIContextOption: Any] = [
             .useSoftwareRenderer: false,
@@ -75,6 +75,19 @@ class CameraManager: NSObject, ObservableObject {
         set {
             captureLock.lock()
             _isCapturingPhoto = newValue
+            captureLock.unlock()
+        }
+    }
+
+    private nonisolated var isFrontCamera: Bool {
+        get {
+            captureLock.lock()
+            defer { captureLock.unlock() }
+            return _isFrontCamera
+        }
+        set {
+            captureLock.lock()
+            _isFrontCamera = newValue
             captureLock.unlock()
         }
     }
@@ -213,7 +226,7 @@ class CameraManager: NSObject, ObservableObject {
     
     // ⚡️ CIContext 워밍업 - GPU 파이프라인 미리 초기화
     private nonisolated func warmupCIContext() {
-        debugPrint("🔥 Starting CIContext warmup...")
+        print("🔥 Starting CIContext warmup...")
         let startTime = CFAbsoluteTimeGetCurrent()
         
         // 작은 더미 이미지로 GPU 파이프라인 워밍업 (더 현실적인 크기)
@@ -221,7 +234,7 @@ class CameraManager: NSObject, ObservableObject {
         _ = ciContext.createCGImage(dummyImage, from: dummyImage.extent)
         
         let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-        debugPrint("✅ CIContext warmed up in \(String(format: "%.3f", elapsed))s")
+        print("✅ CIContext warmed up in \(String(format: "%.3f", elapsed))s")
     }
     
     // MARK: - Camera Switch
@@ -274,7 +287,7 @@ class CameraManager: NSObject, ObservableObject {
                 )
                 let appliedZoomFactor = self.applyZoomFactor(currentZoomFactor, to: newDevice)
 
-                self._isFrontCamera = (newPosition == .front)
+                self.isFrontCamera = (newPosition == .front)
                 Task { @MainActor in
                     self.isUsingFrontCamera = (newPosition == .front)
                     self.currentZoomFactor = appliedZoomFactor
@@ -369,20 +382,20 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
 
-    private func clampedZoomFactor(_ zoomFactor: CGFloat, for device: AVCaptureDevice) -> CGFloat {
+    private nonisolated func clampedZoomFactor(_ zoomFactor: CGFloat, for device: AVCaptureDevice) -> CGFloat {
         let minimumZoomFactor = max(
             device.minAvailableVideoZoomFactor,
-            AppConstants.Camera.minimumZoomFactor
+            1.0
         )
         let maximumZoomFactor = min(
             device.maxAvailableVideoZoomFactor,
-            AppConstants.Camera.maximumZoomFactor
+            5.0
         )
 
         return min(max(zoomFactor, minimumZoomFactor), max(maximumZoomFactor, minimumZoomFactor))
     }
 
-    private func applyZoomFactor(_ zoomFactor: CGFloat, to device: AVCaptureDevice) -> CGFloat {
+    private nonisolated func applyZoomFactor(_ zoomFactor: CGFloat, to device: AVCaptureDevice) -> CGFloat {
         let clampedZoomFactor = clampedZoomFactor(zoomFactor, for: device)
 
         do {
@@ -391,26 +404,26 @@ class CameraManager: NSObject, ObservableObject {
             device.unlockForConfiguration()
             return clampedZoomFactor
         } catch {
-            debugPrint("❌ Zoom update failed: \(error)")
+            print("❌ Zoom update failed: \(error)")
             return device.videoZoomFactor
         }
     }
 
-    private func configureVideoStabilization(for device: AVCaptureDevice, enabled: Bool) {
+    private nonisolated func configureVideoStabilization(for device: AVCaptureDevice, enabled: Bool) {
         guard let connection = videoOutput.connection(with: .video) else { return }
 
         guard connection.isVideoStabilizationSupported else {
-            debugPrint("⚠️ Video stabilization not supported on this connection")
+            print("⚠️ Video stabilization not supported on this connection")
             return
         }
 
         let mode = enabled ? preferredStabilizationMode(for: device) : .off
         connection.preferredVideoStabilizationMode = mode
 
-        debugPrint("✅ Video stabilization requested: \(stabilizationModeDescription(mode))")
+        print("✅ Video stabilization requested: \(stabilizationModeDescription(mode))")
     }
 
-    private func preferredStabilizationMode(for device: AVCaptureDevice) -> AVCaptureVideoStabilizationMode {
+    private nonisolated func preferredStabilizationMode(for device: AVCaptureDevice) -> AVCaptureVideoStabilizationMode {
         let format = device.activeFormat
 
         if #available(iOS 18.0, *),
@@ -434,7 +447,7 @@ class CameraManager: NSObject, ObservableObject {
         return .auto
     }
 
-    private func stabilizationModeDescription(_ mode: AVCaptureVideoStabilizationMode) -> String {
+    private nonisolated func stabilizationModeDescription(_ mode: AVCaptureVideoStabilizationMode) -> String {
         switch mode {
         case .off:
             return "off"
@@ -536,9 +549,11 @@ class CameraManager: NSObject, ObservableObject {
         if !isFrameReady {
             let waitStartTime = CFAbsoluteTimeGetCurrent()
             debugPrint("⚡️ Waiting for first frame...")
-            for _ in 0..<20 {
+            for _ in 0..<AppConstants.Camera.maxFrameWaitAttempts {
                 if isFrameReady { break }
-                try? await Task.sleep(nanoseconds: 50_000_000) // 0.05초씩
+                try? await Task.sleep(
+                    nanoseconds: UInt64(AppConstants.Camera.frameWaitInterval * 1_000_000_000)
+                )
             }
             
             // 여전히 프레임이 안 오면 에러
@@ -554,18 +569,16 @@ class CameraManager: NSObject, ObservableObject {
         isCapturingPhoto = true
         defer { isCapturingPhoto = false }
 
-        captureLock.lock()
-        let bufferedFrames = recentFrameBuffer
-        captureLock.unlock()
-
-        guard !bufferedFrames.isEmpty else {
-            debugPrint("⚠️ No buffered frames available for capture")
-            return nil
-        }
-
         let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UIImage?, Error>) in
             self.outputQueue.async { [weak self] in
                 guard let self = self else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+
+                let bufferedFrames = self.frameSnapshot()
+                guard !bufferedFrames.isEmpty else {
+                    debugPrint("⚠️ No buffered frames available for capture")
                     continuation.resume(returning: nil)
                     return
                 }
@@ -591,7 +604,7 @@ class CameraManager: NSObject, ObservableObject {
 
                 debugPrint("✅ Buffered capture processed in \(String(format: "%.3f", CFAbsoluteTimeGetCurrent() - startTime))s")
 
-                let orientation: UIImage.Orientation = self._isFrontCamera ? .leftMirrored : .right
+                let orientation: UIImage.Orientation = self.isFrontCamera ? .leftMirrored : .right
                 let image = UIImage(cgImage: cgImage, scale: 1.0, orientation: orientation)
                 continuation.resume(returning: image)
             }
@@ -615,7 +628,7 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         // 첫 프레임 도착 표시
         if !isFrameReady {
             isFrameReady = true
-            debugPrint("✅ First frame ready!")
+            print("✅ First frame ready!")
         }
 
         guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
@@ -625,7 +638,7 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     private nonisolated func appendRecentFrame(_ imageBuffer: CVPixelBuffer) {
         captureLock.lock()
         recentFrameBuffer.append(imageBuffer)
-        let overflowCount = recentFrameBuffer.count - AppConstants.Camera.recentFrameBufferSize
+        let overflowCount = recentFrameBuffer.count - 5
         if overflowCount > 0 {
             recentFrameBuffer.removeFirst(overflowCount)
         }
@@ -639,15 +652,24 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         captureLock.unlock()
     }
 
+    private nonisolated func frameSnapshot() -> [CVPixelBuffer] {
+        captureLock.lock()
+        let snapshot = recentFrameBuffer
+        captureLock.unlock()
+        return snapshot
+    }
+
     private nonisolated func selectSharpestFrame(from buffers: [CVPixelBuffer]) -> CIImage? {
         guard !buffers.isEmpty else { return nil }
+        let sampleCount = sharpnessSampleCount(for: buffers.count)
+        let candidateBuffers = Array(buffers.suffix(sampleCount))
 
         var bestFrame: CIImage?
         var bestScore: Float = -1
 
-        for buffer in buffers {
+        for buffer in candidateBuffers {
             let image = CIImage(cvPixelBuffer: buffer)
-            let score = calculateSharpness(of: image)
+            let score = calculateSharpness(of: image, downsampleScale: sharpnessDownsampleScale())
             if score > bestScore {
                 bestScore = score
                 bestFrame = image
@@ -658,9 +680,9 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     }
 
     /// Laplacian 엣지 기반 선명도 점수 (높을수록 선명)
-    private nonisolated func calculateSharpness(of image: CIImage) -> Float {
-        // 연산 속도를 위해 25% 크기로 다운샘플
-        let scaled = image.transformed(by: CGAffineTransform(scaleX: 0.25, y: 0.25))
+    private nonisolated func calculateSharpness(of image: CIImage, downsampleScale: CGFloat) -> Float {
+        let clampedScale = min(max(downsampleScale, 0.1), 1.0)
+        let scaled = image.transformed(by: CGAffineTransform(scaleX: clampedScale, y: clampedScale))
 
         // 그레이스케일 변환
         guard let grayscaleFilter = CIFilter(name: "CIColorControls") else { return 0 }
@@ -691,6 +713,23 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         )
 
         return Float(pixel[0]) / 255.0
+    }
+
+    private nonisolated func sharpnessSampleCount(for availableCount: Int) -> Int {
+        let defaultSampleCount = 5
+        let lowPowerSampleCount = 3
+        let preferredCount = ProcessInfo.processInfo.isLowPowerModeEnabled
+            ? lowPowerSampleCount
+            : defaultSampleCount
+        return min(max(preferredCount, 1), availableCount)
+    }
+
+    private nonisolated func sharpnessDownsampleScale() -> CGFloat {
+        let defaultScale: CGFloat = 0.25
+        let lowPowerScale: CGFloat = 0.18
+        return ProcessInfo.processInfo.isLowPowerModeEnabled
+            ? lowPowerScale
+            : defaultScale
     }
 
     // MARK: - 후처리 (샤프닝)

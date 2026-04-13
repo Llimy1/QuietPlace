@@ -17,12 +17,12 @@ class AdManager: ObservableObject {
     
     #if DEBUG
     // 테스트 광고 ID (Google 공식 테스트 ID)
-    static let bannerAdUnitID = "ca-app-pub-3940256099942544/2934735716"
-    static let nativeAdUnitID = "ca-app-pub-3940256099942544/3986624511"
+    nonisolated static let bannerAdUnitID = "ca-app-pub-3940256099942544/2934735716"
+    nonisolated static let nativeAdUnitID = "ca-app-pub-3940256099942544/3986624511"
     #else
     // 프로덕션 광고 ID
-    static let bannerAdUnitID = "ca-app-pub-6697014301380374/5978280322"
-    static let nativeAdUnitID = "ca-app-pub-6697014301380374/9346679690"
+    nonisolated static let bannerAdUnitID = "ca-app-pub-6697014301380374/5978280322"
+    nonisolated static let nativeAdUnitID = "ca-app-pub-6697014301380374/9346679690"
     #endif
     
     // MARK: - Initialization

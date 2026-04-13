@@ -81,7 +81,7 @@ class PhotoDataManager: ObservableObject {
             }
             
             guard let data = imageData else {
-                debugPrint("❌ Failed to convert image to data")
+                print("❌ Failed to convert image to data")
                 await MainActor.run {
                     self.errorMessage = "이미지 데이터 변환에 실패했습니다"
                     self.showError = true
@@ -94,17 +94,21 @@ class PhotoDataManager: ObservableObject {
             // 디스크에 저장
             do {
                 try data.write(to: fileURL)
-                debugPrint("✅ Photo saved: \(fileName)")
+                print("✅ Photo saved: \(fileName)")
                 
                 // 4️⃣ 썸네일 미리 생성 (갤러리와 동일한 Retina 크기로)
-                let screenScale = await MainActor.run { UIScreen.main.scale }
-                let screenWidth = await MainActor.run { UIScreen.main.bounds.width }
+                let (screenScale, screenWidth): (CGFloat, CGFloat) = await MainActor.run {
+                    let screen = UIApplication.shared.connectedScenes
+                        .compactMap { $0 as? UIWindowScene }
+                        .first?.screen
+                    return (screen?.scale ?? 3.0, screen?.bounds.width ?? 390.0)
+                }
                 let thumbnailPx = (screenWidth / 3) * screenScale
                 let thumbnailSize = CGSize(width: thumbnailPx, height: thumbnailPx)
-                await ThumbnailCache.shared.getThumbnailAsync(for: photoItem, size: thumbnailSize)
+                _ = await ThumbnailCache.shared.getThumbnailAsync(for: photoItem, size: thumbnailSize)
                 
             } catch {
-                debugPrint("❌ Failed to save photo: \(error)")
+                print("❌ Failed to save photo: \(error)")
                 await MainActor.run {
                     self.errorMessage = "사진 저장에 실패했습니다: \(error.localizedDescription)"
                     self.showError = true
@@ -155,7 +159,7 @@ class PhotoDataManager: ObservableObject {
                 return photos.sorted { $0.createdDate > $1.createdDate }
                 
             } catch {
-                debugPrint("❌ Failed to load photos: \(error)")
+                print("❌ Failed to load photos: \(error)")
                 return []
             }
         }.value
@@ -316,29 +320,41 @@ extension UIImage {
             return self.jpegData(compressionQuality: compressionQuality)
         }
         
-        // ⚡️ 알파 채널이 없는 새 CGImage 생성 (경고 제거)
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue)
-        
-        guard let context = CGContext(
-            data: nil,
-            width: cgImage.width,
-            height: cgImage.height,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: colorSpace,
-            bitmapInfo: bitmapInfo.rawValue
-        ) else {
-            debugPrint("❌ Failed to create CGContext")
-            return self.jpegData(compressionQuality: compressionQuality)
-        }
-        
-        // CGImage를 알파 없이 그리기
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
-        
-        guard let imageWithoutAlpha = context.makeImage() else {
-            debugPrint("❌ Failed to create image without alpha")
-            return self.jpegData(compressionQuality: compressionQuality)
+        // 원본 색공간을 우선 유지해 P3 -> HEIC 경로의 색 손실을 줄인다.
+        let workingColorSpace = cgImage.colorSpace
+            ?? CGColorSpace(name: CGColorSpace.displayP3)
+            ?? CGColorSpace(name: CGColorSpace.sRGB)
+            ?? CGColorSpaceCreateDeviceRGB()
+        let alphaInfo = cgImage.alphaInfo
+        let hasAlpha = alphaInfo == .premultipliedLast
+            || alphaInfo == .premultipliedFirst
+            || alphaInfo == .last
+            || alphaInfo == .first
+            || alphaInfo == .alphaOnly
+
+        let imageForEncoding: CGImage
+        if hasAlpha {
+            let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue)
+            guard let context = CGContext(
+                data: nil,
+                width: cgImage.width,
+                height: cgImage.height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: workingColorSpace,
+                bitmapInfo: bitmapInfo.rawValue
+            ) else {
+                debugPrint("❌ Failed to create CGContext")
+                return self.jpegData(compressionQuality: compressionQuality)
+            }
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+            guard let imageWithoutAlpha = context.makeImage() else {
+                debugPrint("❌ Failed to create image without alpha")
+                return self.jpegData(compressionQuality: compressionQuality)
+            }
+            imageForEncoding = imageWithoutAlpha
+        } else {
+            imageForEncoding = cgImage
         }
         
         // 메모리에 데이터 생성
@@ -360,8 +376,8 @@ extension UIImage {
             kCGImageDestinationLossyCompressionQuality: compressionQuality
         ]
         
-        // 알파 없는 이미지 추가 및 저장
-        CGImageDestinationAddImage(destination, imageWithoutAlpha, options as CFDictionary)
+        // 색공간을 유지한 CGImage를 HEIC로 저장
+        CGImageDestinationAddImage(destination, imageForEncoding, options as CFDictionary)
         
         guard CGImageDestinationFinalize(destination) else {
             debugPrint("❌ Failed to finalize HEIC image")
@@ -371,5 +387,3 @@ extension UIImage {
         return data as Data
     }
 }
-
-

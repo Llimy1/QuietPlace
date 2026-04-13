@@ -8,12 +8,11 @@
 import UIKit
 import ImageIO
 
-@MainActor
 class ThumbnailCache {
     static let shared = ThumbnailCache()
     
     // Make memoryCache internal so it can be accessed for cleanup
-    let memoryCache = NSCache<NSString, UIImage>()
+    nonisolated(unsafe) let memoryCache = NSCache<NSString, UIImage>()
     nonisolated private let diskCacheDirectory: URL
     
     private init() {
@@ -300,7 +299,7 @@ class ThumbnailCache {
 // MARK: - CGImagePropertyOrientation → UIImage.Orientation 변환
 
 private extension UIImage.Orientation {
-    init(_ cgOrientation: CGImagePropertyOrientation) {
+    nonisolated init(_ cgOrientation: CGImagePropertyOrientation) {
         switch cgOrientation {
         case .up:            self = .up
         case .upMirrored:    self = .upMirrored

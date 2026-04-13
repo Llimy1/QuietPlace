@@ -118,6 +118,15 @@ enum AppConstants {
         /// 셔터 시점에 평가할 최근 프레임 개수
         static let recentFrameBufferSize: Int = 5
 
+        /// 저전력 모드에서 선명도 평가 프레임 수(지연 절감)
+        static let lowPowerSharpnessSampleCount: Int = 3
+
+        /// 선명도 평가 시 기본 다운샘플 비율
+        static let defaultSharpnessDownsampleScale: CGFloat = 0.25
+
+        /// 저전력 모드에서 선명도 평가 다운샘플 비율
+        static let lowPowerSharpnessDownsampleScale: CGFloat = 0.18
+
         /// 카메라 전환 시 프리뷰를 가려둘 최소 시간
         static let cameraSwitchOverlayHoldDuration: TimeInterval = 0.45
     }
