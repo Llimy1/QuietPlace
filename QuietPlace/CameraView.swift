@@ -124,13 +124,27 @@ struct CameraView: View {
                 }
             }
             .onChange(of: volumeHandler.volumeUpPressed) { oldValue, newValue in
-                if !oldValue && newValue {
+                if !oldValue && newValue && !showGallery && !showSettings {
                     takePhoto()
                 }
             }
             .onChange(of: volumeHandler.volumeDownPressed) { oldValue, newValue in
-                if !oldValue && newValue {
+                if !oldValue && newValue && !showGallery && !showSettings {
                     takePhoto()
+                }
+            }
+            .onChange(of: showGallery) { _, isPresented in
+                if isPresented {
+                    volumeHandler.stopMonitoring()
+                } else {
+                    volumeHandler.startMonitoring()
+                }
+            }
+            .onChange(of: showSettings) { _, isPresented in
+                if isPresented {
+                    volumeHandler.stopMonitoring()
+                } else {
+                    volumeHandler.startMonitoring()
                 }
             }
             .onChange(of: settingsManager.isDisguiseMode) { _, isDisguise in

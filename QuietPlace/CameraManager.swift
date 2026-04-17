@@ -36,6 +36,7 @@ class CameraManager: NSObject, ObservableObject {
     nonisolated(unsafe) private var _isCapturingPhoto = false
     nonisolated(unsafe) private var _isFrameReady = false
     nonisolated(unsafe) private var _isFrontCamera = false
+    nonisolated(unsafe) private var _hasCapturedSinceReset = false
 
     // 최근 프레임 버퍼 (셔터 직전 프레임들에서 즉시 선택)
     nonisolated(unsafe) private var recentFrameBuffer: [CVPixelBuffer] = []
@@ -88,6 +89,19 @@ class CameraManager: NSObject, ObservableObject {
         set {
             captureLock.lock()
             _isFrontCamera = newValue
+            captureLock.unlock()
+        }
+    }
+
+    private nonisolated var hasCapturedSinceReset: Bool {
+        get {
+            captureLock.lock()
+            defer { captureLock.unlock() }
+            return _hasCapturedSinceReset
+        }
+        set {
+            captureLock.lock()
+            _hasCapturedSinceReset = newValue
             captureLock.unlock()
         }
     }
@@ -565,6 +579,28 @@ class CameraManager: NSObject, ObservableObject {
             let waitElapsed = CFAbsoluteTimeGetCurrent() - waitStartTime
             debugPrint("⚡️ Frame ready after \(String(format: "%.3f", waitElapsed))s")
         }
+
+        // 세션 시작/카메라 전환 후 첫 촬영은 기존 버퍼를 비우고
+        // 신선한 프레임으로 다시 채운 뒤 캡처한다.
+        if !hasCapturedSinceReset {
+            clearRecentFrameBuffer()
+
+            let settleDelayNs = UInt64(AppConstants.Camera.initialCaptureSettleDelay * 1_000_000_000)
+            if settleDelayNs > 0 {
+                try? await Task.sleep(nanoseconds: settleDelayNs)
+            }
+
+            let targetFrames = min(
+                AppConstants.Camera.initialCaptureMinBufferedFrames,
+                AppConstants.Camera.recentFrameBufferSize
+            )
+            let waitDeadline = Date().addingTimeInterval(AppConstants.Camera.initialCaptureBufferWaitTimeout)
+            while bufferedFrameCount() < targetFrames, Date() < waitDeadline {
+                try? await Task.sleep(
+                    nanoseconds: UInt64(AppConstants.Camera.frameWaitInterval * 1_000_000_000)
+                )
+            }
+        }
         
         isCapturingPhoto = true
         defer { isCapturingPhoto = false }
@@ -612,7 +648,9 @@ class CameraManager: NSObject, ObservableObject {
         
         let captureElapsed = CFAbsoluteTimeGetCurrent() - captureStartTime
         debugPrint("✅ Photo captured in \(String(format: "%.3f", captureElapsed))s")
-        
+        if result != nil {
+            hasCapturedSinceReset = true
+        }
         return result
     }
 }
@@ -649,7 +687,21 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         captureLock.lock()
         recentFrameBuffer.removeAll(keepingCapacity: true)
         _isFrameReady = false
+        _hasCapturedSinceReset = false
         captureLock.unlock()
+    }
+
+    private nonisolated func clearRecentFrameBuffer() {
+        captureLock.lock()
+        recentFrameBuffer.removeAll(keepingCapacity: true)
+        captureLock.unlock()
+    }
+
+    private nonisolated func bufferedFrameCount() -> Int {
+        captureLock.lock()
+        let count = recentFrameBuffer.count
+        captureLock.unlock()
+        return count
     }
 
     private nonisolated func frameSnapshot() -> [CVPixelBuffer] {
@@ -663,13 +715,42 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         guard !buffers.isEmpty else { return nil }
         let sampleCount = sharpnessSampleCount(for: buffers.count)
         let candidateBuffers = Array(buffers.suffix(sampleCount))
+        let minimumFramesForLumaGuard = 4
+        let lumaDeltaThreshold: Float = 0.12
+        let centerWeight: Float = 1.35
+        let recencyWeight: Float = 0.08
+        let centerCropRatio: CGFloat = 0.62
+
+        let candidateImages = candidateBuffers.map { CIImage(cvPixelBuffer: $0) }
+        guard !candidateImages.isEmpty else { return nil }
+
+        let latestLuma = calculateAverageLuma(of: candidateImages.last!)
+        var filteredImages = candidateImages
+
+        if candidateImages.count >= minimumFramesForLumaGuard {
+            filteredImages = candidateImages.filter { image in
+                let luma = calculateAverageLuma(of: image)
+                return abs(luma - latestLuma) <= lumaDeltaThreshold
+            }
+            if filteredImages.isEmpty {
+                filteredImages = candidateImages
+            }
+        }
 
         var bestFrame: CIImage?
         var bestScore: Float = -1
+        let downsampleScale = sharpnessDownsampleScale()
+        let denominator = Float(max(filteredImages.count - 1, 1))
 
-        for buffer in candidateBuffers {
-            let image = CIImage(cvPixelBuffer: buffer)
-            let score = calculateSharpness(of: image, downsampleScale: sharpnessDownsampleScale())
+        for (index, image) in filteredImages.enumerated() {
+            let components = calculateSharpnessComponents(
+                of: image,
+                downsampleScale: downsampleScale,
+                centerCropRatio: centerCropRatio
+            )
+            let recencyBoost = (Float(index) / denominator) * recencyWeight
+            let score = components.global + (components.center * centerWeight) + recencyBoost
+
             if score > bestScore {
                 bestScore = score
                 bestFrame = image
@@ -679,14 +760,24 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         return bestFrame
     }
 
-    /// Laplacian 엣지 기반 선명도 점수 (높을수록 선명)
-    private nonisolated func calculateSharpness(of image: CIImage, downsampleScale: CGFloat) -> Float {
+    /// 전체/중앙 엣지 기반 선명도 점수
+    private nonisolated func calculateSharpnessComponents(
+        of image: CIImage,
+        downsampleScale: CGFloat,
+        centerCropRatio: CGFloat
+    ) -> (global: Float, center: Float) {
         let clampedScale = min(max(downsampleScale, 0.1), 1.0)
         let scaled = image.transformed(by: CGAffineTransform(scaleX: clampedScale, y: clampedScale))
+        let globalScore = edgeAverageScore(of: scaled)
+        let centerImage = centerCroppedImage(from: scaled, ratio: centerCropRatio)
+        let centerScore = edgeAverageScore(of: centerImage ?? scaled)
+        return (global: globalScore, center: centerScore)
+    }
 
+    private nonisolated func edgeAverageScore(of image: CIImage) -> Float {
         // 그레이스케일 변환
         guard let grayscaleFilter = CIFilter(name: "CIColorControls") else { return 0 }
-        grayscaleFilter.setValue(scaled, forKey: kCIInputImageKey)
+        grayscaleFilter.setValue(image, forKey: kCIInputImageKey)
         grayscaleFilter.setValue(0.0, forKey: kCIInputSaturationKey)
         guard let gray = grayscaleFilter.outputImage else { return 0 }
 
@@ -715,6 +806,39 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         return Float(pixel[0]) / 255.0
     }
 
+    private nonisolated func centerCroppedImage(from image: CIImage, ratio: CGFloat) -> CIImage? {
+        let clampedRatio = min(max(ratio, 0.2), 1.0)
+        let extent = image.extent
+        guard extent.width > 1, extent.height > 1 else { return nil }
+        let width = extent.width * clampedRatio
+        let height = extent.height * clampedRatio
+        let cropRect = CGRect(
+            x: extent.midX - (width / 2),
+            y: extent.midY - (height / 2),
+            width: width,
+            height: height
+        )
+        return image.cropped(to: cropRect)
+    }
+
+    private nonisolated func calculateAverageLuma(of image: CIImage) -> Float {
+        guard let avgFilter = CIFilter(name: "CIAreaAverage") else { return 0.5 }
+        avgFilter.setValue(image, forKey: kCIInputImageKey)
+        avgFilter.setValue(CIVector(cgRect: image.extent), forKey: kCIInputExtentKey)
+        guard let avgOutput = avgFilter.outputImage else { return 0.5 }
+
+        var pixel = [UInt8](repeating: 0, count: 4)
+        ciContext.render(
+            avgOutput,
+            toBitmap: &pixel,
+            rowBytes: 4,
+            bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+            format: .RGBA8,
+            colorSpace: CGColorSpaceCreateDeviceRGB()
+        )
+        return Float(pixel[0]) / 255.0
+    }
+
     private nonisolated func sharpnessSampleCount(for availableCount: Int) -> Int {
         let defaultSampleCount = 5
         let lowPowerSampleCount = 3
@@ -737,9 +861,19 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     private nonisolated func applyPostProcessing(to image: CIImage) -> CIImage {
         // 루미넌스 샤프닝 (색상 변화 없이 디테일만 강화)
         // CINoiseReduction 제거: 선명도 기반 최적 프레임 선택으로 이미 대체됨 (~50ms 절약)
+        let sceneLuma = calculateAverageLuma(of: image)
+        let sharpenAmount: CGFloat
+        if sceneLuma < 0.22 {
+            sharpenAmount = 0.20
+        } else if sceneLuma < 0.45 {
+            sharpenAmount = 0.28
+        } else {
+            sharpenAmount = 0.36
+        }
+
         guard let sharpenFilter = CIFilter(name: "CISharpenLuminance") else { return image }
         sharpenFilter.setValue(image, forKey: kCIInputImageKey)
-        sharpenFilter.setValue(0.4, forKey: kCIInputSharpnessKey)
+        sharpenFilter.setValue(sharpenAmount, forKey: kCIInputSharpnessKey)
         return sharpenFilter.outputImage ?? image
     }
 }

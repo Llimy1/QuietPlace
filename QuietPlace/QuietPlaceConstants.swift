@@ -118,6 +118,15 @@ enum AppConstants {
         /// 셔터 시점에 평가할 최근 프레임 개수
         static let recentFrameBufferSize: Int = 5
 
+        /// 세션 시작/카메라 전환 직후 첫 촬영 전에 잠깐 안정화 대기 시간
+        static let initialCaptureSettleDelay: TimeInterval = 0.25
+
+        /// 첫 촬영 시 버퍼가 채워지길 기다리는 최대 시간
+        static let initialCaptureBufferWaitTimeout: TimeInterval = 0.4
+
+        /// 첫 촬영 시 최소 확보할 최근 프레임 수
+        static let initialCaptureMinBufferedFrames: Int = 5
+
         /// 저전력 모드에서 선명도 평가 프레임 수(지연 절감)
         static let lowPowerSharpnessSampleCount: Int = 3
 
