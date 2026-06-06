@@ -6,6 +6,7 @@
 //
 
 import AVFoundation
+import CoreMotion
 import SwiftUI
 import UIKit
 import Combine
@@ -30,6 +31,15 @@ class CameraManager: NSObject, ObservableObject {
     nonisolated(unsafe) private let videoOutput = AVCaptureVideoDataOutput()
     private let sessionQueue = DispatchQueue(label: "camera.session")
     private let outputQueue = DispatchQueue(label: "camera.output", qos: .userInteractive)
+    private let processingQueue = DispatchQueue(label: "camera.processing", qos: .userInitiated)
+    private let motionManager = CMMotionManager()
+    private let motionQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "camera.motion"
+        queue.qualityOfService = .userInteractive
+        queue.maxConcurrentOperationCount = 1
+        return queue
+    }()
 
     // Capture state (thread-safe, captureLock으로 보호)
     private let captureLock = NSLock()
@@ -37,9 +47,35 @@ class CameraManager: NSObject, ObservableObject {
     nonisolated(unsafe) private var _isFrameReady = false
     nonisolated(unsafe) private var _isFrontCamera = false
     nonisolated(unsafe) private var _hasCapturedSinceReset = false
+    nonisolated(unsafe) private var _latestMotionScore: Double?
+    nonisolated(unsafe) private var _latestFrameSequence: UInt64 = 0
 
     // 최근 프레임 버퍼 (셔터 직전 프레임들에서 즉시 선택)
-    nonisolated(unsafe) private var recentFrameBuffer: [CVPixelBuffer] = []
+    nonisolated(unsafe) private var recentFrameBuffer: [BufferedVideoFrame] = []
+
+    private struct BufferedVideoFrame {
+        nonisolated(unsafe) let pixelBuffer: CVPixelBuffer
+        let sequence: UInt64
+        let receivedAt: CFTimeInterval
+        let motionScore: Double?
+        let readiness: CameraReadinessState
+    }
+
+    private struct FrameSelection {
+        let image: CIImage
+        let score: Float
+        let motionScore: Double?
+    }
+
+    private struct CameraReadinessState: Sendable {
+        let isAdjustingFocus: Bool
+        let isAdjustingExposure: Bool
+        let isAdjustingWhiteBalance: Bool
+
+        nonisolated var isReady: Bool {
+            !isAdjustingFocus && !isAdjustingExposure && !isAdjustingWhiteBalance
+        }
+    }
 
     // ⚡️ 재사용 가능한 CIContext (Display P3 광색역, GPU 렌더링)
     private let ciContext: CIContext = {
@@ -67,19 +103,6 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
     
-    private nonisolated var isCapturingPhoto: Bool {
-        get {
-            captureLock.lock()
-            defer { captureLock.unlock() }
-            return _isCapturingPhoto
-        }
-        set {
-            captureLock.lock()
-            _isCapturingPhoto = newValue
-            captureLock.unlock()
-        }
-    }
-
     private nonisolated var isFrontCamera: Bool {
         get {
             captureLock.lock()
@@ -106,8 +129,66 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    private nonisolated var latestMotionScore: Double? {
+        get {
+            captureLock.lock()
+            defer { captureLock.unlock() }
+            return _latestMotionScore
+        }
+        set {
+            captureLock.lock()
+            _latestMotionScore = newValue
+            captureLock.unlock()
+        }
+    }
+
     private override init() {
         super.init()
+    }
+
+    private func startMotionMonitoring() {
+        guard !motionManager.isDeviceMotionActive else { return }
+
+        guard motionManager.isDeviceMotionAvailable else {
+            debugPrint("⚠️ Device motion is not available")
+            return
+        }
+
+        motionManager.deviceMotionUpdateInterval = 1.0 / 60.0
+        motionManager.startDeviceMotionUpdates(to: motionQueue) { [weak self] motion, error in
+            if let error {
+                debugPrint("⚠️ Motion update failed: \(error.localizedDescription)")
+                return
+            }
+
+            guard let motion else { return }
+            self?.updateMotionSample(motion)
+        }
+    }
+
+    private func stopMotionMonitoring() {
+        guard motionManager.isDeviceMotionActive else { return }
+        motionManager.stopDeviceMotionUpdates()
+        latestMotionScore = nil
+    }
+
+    private nonisolated func updateMotionSample(_ motion: CMDeviceMotion) {
+        let rotation = motion.rotationRate
+        let acceleration = motion.userAcceleration
+        let rotationMagnitude = sqrt(
+            (rotation.x * rotation.x) +
+            (rotation.y * rotation.y) +
+            (rotation.z * rotation.z)
+        )
+        let accelerationMagnitude = sqrt(
+            (acceleration.x * acceleration.x) +
+            (acceleration.y * acceleration.y) +
+            (acceleration.z * acceleration.z)
+        )
+
+        // Rotation is measured in rad/s and acceleration in g. Acceleration is weighted
+        // because quick lift/stop gestures often show up there before autofocus settles.
+        latestMotionScore = rotationMagnitude + (accelerationMagnitude * 4.0)
     }
     
     // MARK: - Authorization
@@ -328,6 +409,7 @@ class CameraManager: NSObject, ObservableObject {
     
     func startSession() {
         let stabilizationEnabled = SettingsManager.shared.isStabilizationEnabled
+        startMotionMonitoring()
 
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
@@ -356,6 +438,8 @@ class CameraManager: NSObject, ObservableObject {
     }
     
     func stopSession() {
+        stopMotionMonitoring()
+
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
             
@@ -440,22 +524,17 @@ class CameraManager: NSObject, ObservableObject {
     private nonisolated func preferredStabilizationMode(for device: AVCaptureDevice) -> AVCaptureVideoStabilizationMode {
         let format = device.activeFormat
 
-        if #available(iOS 18.0, *),
-           format.isVideoStabilizationModeSupported(.cinematicExtendedEnhanced) {
-            return .cinematicExtendedEnhanced
-        }
-
-        if #available(iOS 13.0, *),
-           format.isVideoStabilizationModeSupported(.cinematicExtended) {
-            return .cinematicExtended
-        }
-
-        if format.isVideoStabilizationModeSupported(.cinematic) {
-            return .cinematic
+        if #available(iOS 26.0, *),
+           format.isVideoStabilizationModeSupported(.lowLatency) {
+            return .lowLatency
         }
 
         if format.isVideoStabilizationModeSupported(.standard) {
             return .standard
+        }
+
+        if format.isVideoStabilizationModeSupported(.previewOptimized) {
+            return .previewOptimized
         }
 
         return .auto
@@ -546,20 +625,18 @@ class CameraManager: NSObject, ObservableObject {
     func capturePhoto() async throws -> UIImage? {
         let captureStartTime = CFAbsoluteTimeGetCurrent()
         debugPrint("📸 Starting photo capture...")
-        
-        // 세션이 실행 중인지 확인
+
         guard isSessionRunning else {
             debugPrint("⚠️ Camera session not running")
             return nil
         }
-        
-        // 중복 촬영 방지
-        guard !isCapturingPhoto else {
+
+        guard beginPhotoCapture() else {
             debugPrint("⚠️ Already capturing photo")
             return nil
         }
-        
-        // ⚡️ 첫 프레임이 준비될 때까지 대기 (최대 1초, 하지만 더 효율적으로)
+        defer { finishPhotoCapture() }
+
         if !isFrameReady {
             let waitStartTime = CFAbsoluteTimeGetCurrent()
             debugPrint("⚡️ Waiting for first frame...")
@@ -580,52 +657,143 @@ class CameraManager: NSObject, ObservableObject {
             debugPrint("⚡️ Frame ready after \(String(format: "%.3f", waitElapsed))s")
         }
 
-        // 세션 시작/카메라 전환 후 첫 촬영은 기존 버퍼를 비우고
-        // 신선한 프레임으로 다시 채운 뒤 캡처한다.
         if !hasCapturedSinceReset {
-            clearRecentFrameBuffer()
-
             let settleDelayNs = UInt64(AppConstants.Camera.initialCaptureSettleDelay * 1_000_000_000)
             if settleDelayNs > 0 {
                 try? await Task.sleep(nanoseconds: settleDelayNs)
             }
-
-            let targetFrames = min(
-                AppConstants.Camera.initialCaptureMinBufferedFrames,
-                AppConstants.Camera.recentFrameBufferSize
-            )
-            let waitDeadline = Date().addingTimeInterval(AppConstants.Camera.initialCaptureBufferWaitTimeout)
-            while bufferedFrameCount() < targetFrames, Date() < waitDeadline {
-                try? await Task.sleep(
-                    nanoseconds: UInt64(AppConstants.Camera.frameWaitInterval * 1_000_000_000)
-                )
-            }
         }
-        
-        isCapturingPhoto = true
-        defer { isCapturingPhoto = false }
 
-        let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UIImage?, Error>) in
-            self.outputQueue.async { [weak self] in
+        let motionReady = await waitForMotionToSettle(
+            timeout: AppConstants.Camera.captureMotionSettleTimeout
+        )
+        if !motionReady {
+            debugPrint("⚠️ Motion still high; relying on frame quality gate")
+        }
+
+        let cameraReady = await waitForCameraReadiness(
+            timeout: AppConstants.Camera.captureReadinessTimeout
+        )
+        if !cameraReady {
+            debugPrint("⚠️ Capturing before camera adjustment fully settled")
+        }
+
+        let startSequence = beginFreshFrameWindow()
+        let targetFrames = min(
+            AppConstants.Camera.freshCaptureMinFrameCount,
+            AppConstants.Camera.recentFrameBufferSize
+        )
+
+        var result = await waitForBestFreshFrame(
+            afterSequence: startSequence,
+            minFrameCount: targetFrames,
+            timeout: AppConstants.Camera.freshCaptureFrameWaitTimeout
+        )
+
+        if result == nil {
+            result = await waitForBestFreshFrame(
+                afterSequence: startSequence,
+                minFrameCount: min(targetFrames + 2, AppConstants.Camera.recentFrameBufferSize),
+                timeout: AppConstants.Camera.freshCaptureRetryWaitTimeout
+            )
+        }
+
+        let captureElapsed = CFAbsoluteTimeGetCurrent() - captureStartTime
+        if result != nil {
+            hasCapturedSinceReset = true
+            debugPrint("✅ Photo captured in \(String(format: "%.3f", captureElapsed))s")
+        } else {
+            debugPrint("⚠️ Photo capture skipped: no stable sharp frame found in \(String(format: "%.3f", captureElapsed))s")
+        }
+        return result
+    }
+
+    private nonisolated func beginPhotoCapture() -> Bool {
+        captureLock.lock()
+        defer { captureLock.unlock() }
+
+        guard !_isCapturingPhoto else { return false }
+        _isCapturingPhoto = true
+        return true
+    }
+
+    private nonisolated func finishPhotoCapture() {
+        captureLock.lock()
+        _isCapturingPhoto = false
+        captureLock.unlock()
+    }
+
+    private nonisolated func beginFreshFrameWindow() -> UInt64 {
+        captureLock.lock()
+        recentFrameBuffer.removeAll(keepingCapacity: true)
+        let startSequence = _latestFrameSequence
+        captureLock.unlock()
+        return startSequence
+    }
+
+    private func waitForBestFreshFrame(
+        afterSequence startSequence: UInt64,
+        minFrameCount: Int,
+        timeout: TimeInterval
+    ) async -> UIImage? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastFrames: [BufferedVideoFrame] = []
+        var lastEvaluatedCount = 0
+
+        while Date() < deadline {
+            let frames = frameSnapshot(
+                afterSequence: startSequence,
+                maxAge: AppConstants.Camera.captureMaxCandidateAge
+            )
+            lastFrames = frames
+
+            if frames.count >= minFrameCount, frames.count != lastEvaluatedCount {
+                lastEvaluatedCount = frames.count
+                if let image = await renderBestBufferedFrame(from: frames) {
+                    return image
+                }
+            }
+
+            try? await Task.sleep(
+                nanoseconds: UInt64(AppConstants.Camera.frameWaitInterval * 1_000_000_000)
+            )
+        }
+
+        let finalFrames = frameSnapshot(
+            afterSequence: startSequence,
+            maxAge: AppConstants.Camera.captureMaxCandidateAge
+        )
+        let frames = finalFrames.isEmpty ? lastFrames : finalFrames
+        guard !frames.isEmpty else {
+            debugPrint("⚠️ No fresh buffered frames available for capture")
+            return nil
+        }
+
+        return await renderBestBufferedFrame(from: frames)
+    }
+
+    private func renderBestBufferedFrame(from bufferedFrames: [BufferedVideoFrame]) async -> UIImage? {
+        await withCheckedContinuation { continuation in
+            self.processingQueue.async { [weak self] in
                 guard let self = self else {
                     continuation.resume(returning: nil)
                     return
                 }
 
-                let bufferedFrames = self.frameSnapshot()
                 guard !bufferedFrames.isEmpty else {
-                    debugPrint("⚠️ No buffered frames available for capture")
+                    debugPrint("⚠️ No fresh buffered frames available for capture")
                     continuation.resume(returning: nil)
                     return
                 }
 
                 guard let selectedFrame = self.selectSharpestFrame(from: bufferedFrames) else {
+                    debugPrint("⚠️ No buffered frame passed sharpness/motion gate")
                     continuation.resume(returning: nil)
                     return
                 }
 
                 let startTime = CFAbsoluteTimeGetCurrent()
-                let processedCIImage = self.applyPostProcessing(to: selectedFrame)
+                let processedCIImage = self.applyPostProcessing(to: selectedFrame.image)
                 let p3ColorSpace = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
 
                 guard let cgImage = self.ciContext.createCGImage(
@@ -638,20 +806,87 @@ class CameraManager: NSObject, ObservableObject {
                     return
                 }
 
-                debugPrint("✅ Buffered capture processed in \(String(format: "%.3f", CFAbsoluteTimeGetCurrent() - startTime))s")
+                let motionText = selectedFrame.motionScore
+                    .map { String(format: "%.2f", $0) }
+                    ?? "n/a"
+                debugPrint(
+                    "✅ Buffered capture processed in \(String(format: "%.3f", CFAbsoluteTimeGetCurrent() - startTime))s, sharpness: \(String(format: "%.4f", selectedFrame.score)), motion: \(motionText)"
+                )
 
                 let orientation: UIImage.Orientation = self.isFrontCamera ? .leftMirrored : .right
                 let image = UIImage(cgImage: cgImage, scale: 1.0, orientation: orientation)
                 continuation.resume(returning: image)
             }
         }
-        
-        let captureElapsed = CFAbsoluteTimeGetCurrent() - captureStartTime
-        debugPrint("✅ Photo captured in \(String(format: "%.3f", captureElapsed))s")
-        if result != nil {
-            hasCapturedSinceReset = true
+    }
+
+    private func waitForCameraReadiness(timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            let state = await cameraReadinessState()
+            if state.isReady {
+                return true
+            }
+
+            try? await Task.sleep(
+                nanoseconds: UInt64(AppConstants.Camera.frameWaitInterval * 1_000_000_000)
+            )
         }
-        return result
+
+        let finalState = await cameraReadinessState()
+        return finalState.isReady
+    }
+
+    private func cameraReadinessState() async -> CameraReadinessState {
+        await withCheckedContinuation { continuation in
+            sessionQueue.async { [weak self] in
+                guard let self = self,
+                      let device = self.videoDeviceInput?.device else {
+                    continuation.resume(
+                        returning: CameraReadinessState(
+                            isAdjustingFocus: false,
+                            isAdjustingExposure: false,
+                            isAdjustingWhiteBalance: false
+                        )
+                    )
+                    return
+                }
+
+                continuation.resume(
+                    returning: CameraReadinessState(
+                        isAdjustingFocus: device.isAdjustingFocus,
+                        isAdjustingExposure: device.isAdjustingExposure,
+                        isAdjustingWhiteBalance: device.isAdjustingWhiteBalance
+                    )
+                )
+            }
+        }
+    }
+
+    private func waitForMotionToSettle(timeout: TimeInterval) async -> Bool {
+        guard latestMotionScore != nil else { return true }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        var stableSampleCount = 0
+
+        while Date() < deadline {
+            let score = latestMotionScore ?? 0
+            if score <= AppConstants.Camera.capturePreferredMotionScore {
+                stableSampleCount += 1
+                if stableSampleCount >= AppConstants.Camera.captureMotionStableSampleCount {
+                    return true
+                }
+            } else {
+                stableSampleCount = 0
+            }
+
+            try? await Task.sleep(
+                nanoseconds: UInt64(AppConstants.Camera.frameWaitInterval * 1_000_000_000)
+            )
+        }
+
+        return (latestMotionScore ?? 0) <= AppConstants.Camera.captureMaxMotionScore
     }
 }
 
@@ -670,13 +905,33 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         }
 
         guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        appendRecentFrame(imageBuffer)
+        appendRecentFrame(
+            imageBuffer,
+            receivedAt: CACurrentMediaTime(),
+            motionScore: latestMotionScore,
+            readiness: currentCameraReadinessSnapshot()
+        )
     }
 
-    private nonisolated func appendRecentFrame(_ imageBuffer: CVPixelBuffer) {
+    private nonisolated func appendRecentFrame(
+        _ imageBuffer: CVPixelBuffer,
+        receivedAt: CFTimeInterval,
+        motionScore: Double?,
+        readiness: CameraReadinessState
+    ) {
         captureLock.lock()
-        recentFrameBuffer.append(imageBuffer)
-        let overflowCount = recentFrameBuffer.count - 5
+        _latestFrameSequence += 1
+        let sequence = _latestFrameSequence
+        let frame = BufferedVideoFrame(
+            pixelBuffer: imageBuffer,
+            sequence: sequence,
+            receivedAt: receivedAt,
+            motionScore: motionScore,
+            readiness: readiness
+        )
+
+        recentFrameBuffer.append(frame)
+        let overflowCount = recentFrameBuffer.count - AppConstants.Camera.recentFrameBufferSize
         if overflowCount > 0 {
             recentFrameBuffer.removeFirst(overflowCount)
         }
@@ -691,70 +946,116 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         captureLock.unlock()
     }
 
-    private nonisolated func clearRecentFrameBuffer() {
+    private nonisolated func frameSnapshot(
+        afterSequence startSequence: UInt64,
+        maxAge: TimeInterval
+    ) -> [BufferedVideoFrame] {
+        let now = CACurrentMediaTime()
         captureLock.lock()
-        recentFrameBuffer.removeAll(keepingCapacity: true)
-        captureLock.unlock()
-    }
-
-    private nonisolated func bufferedFrameCount() -> Int {
-        captureLock.lock()
-        let count = recentFrameBuffer.count
-        captureLock.unlock()
-        return count
-    }
-
-    private nonisolated func frameSnapshot() -> [CVPixelBuffer] {
-        captureLock.lock()
-        let snapshot = recentFrameBuffer
+        let snapshot = recentFrameBuffer.filter { frame in
+            frame.sequence > startSequence && (now - frame.receivedAt) <= maxAge
+        }
         captureLock.unlock()
         return snapshot
     }
 
-    private nonisolated func selectSharpestFrame(from buffers: [CVPixelBuffer]) -> CIImage? {
-        guard !buffers.isEmpty else { return nil }
-        let sampleCount = sharpnessSampleCount(for: buffers.count)
-        let candidateBuffers = Array(buffers.suffix(sampleCount))
+    private nonisolated func currentCameraReadinessSnapshot() -> CameraReadinessState {
+        guard let device = videoDeviceInput?.device else {
+            return CameraReadinessState(
+                isAdjustingFocus: false,
+                isAdjustingExposure: false,
+                isAdjustingWhiteBalance: false
+            )
+        }
+
+        return CameraReadinessState(
+            isAdjustingFocus: device.isAdjustingFocus,
+            isAdjustingExposure: device.isAdjustingExposure,
+            isAdjustingWhiteBalance: device.isAdjustingWhiteBalance
+        )
+    }
+
+    private nonisolated func selectSharpestFrame(from frames: [BufferedVideoFrame]) -> FrameSelection? {
+        guard !frames.isEmpty else { return nil }
+        let sampleCount = sharpnessSampleCount(for: frames.count)
+        let candidateFrames = Array(frames.suffix(sampleCount))
         let minimumFramesForLumaGuard = 4
         let lumaDeltaThreshold: Float = 0.12
         let centerWeight: Float = 1.35
         let recencyWeight: Float = 0.08
         let centerCropRatio: CGFloat = 0.62
 
-        let candidateImages = candidateBuffers.map { CIImage(cvPixelBuffer: $0) }
-        guard !candidateImages.isEmpty else { return nil }
+        let candidates = candidateFrames.map { frame in
+            (
+                frame: frame,
+                image: CIImage(cvPixelBuffer: frame.pixelBuffer)
+            )
+        }
+        guard !candidates.isEmpty else { return nil }
 
-        let latestLuma = calculateAverageLuma(of: candidateImages.last!)
-        var filteredImages = candidateImages
+        let latestLuma = calculateAverageLuma(of: candidates.last!.image)
+        var filteredCandidates = candidates
 
-        if candidateImages.count >= minimumFramesForLumaGuard {
-            filteredImages = candidateImages.filter { image in
-                let luma = calculateAverageLuma(of: image)
+        if candidates.count >= minimumFramesForLumaGuard {
+            filteredCandidates = candidates.filter { candidate in
+                let luma = calculateAverageLuma(of: candidate.image)
                 return abs(luma - latestLuma) <= lumaDeltaThreshold
             }
-            if filteredImages.isEmpty {
-                filteredImages = candidateImages
+            if filteredCandidates.isEmpty {
+                filteredCandidates = candidates
             }
         }
 
-        var bestFrame: CIImage?
+        let readinessFilteredCandidates = filteredCandidates.filter { candidate in
+            candidate.frame.readiness.isReady
+        }
+        if !readinessFilteredCandidates.isEmpty {
+            filteredCandidates = readinessFilteredCandidates
+        }
+
+        let motionFilteredCandidates = filteredCandidates.filter { candidate in
+            guard let motionScore = candidate.frame.motionScore else { return true }
+            return motionScore <= AppConstants.Camera.captureMaxMotionScore
+        }
+
+        if !motionFilteredCandidates.isEmpty {
+            filteredCandidates = motionFilteredCandidates
+        } else if filteredCandidates.allSatisfy({ $0.frame.motionScore != nil }) {
+            return nil
+        }
+
+        var bestFrame: FrameSelection?
         var bestScore: Float = -1
         let downsampleScale = sharpnessDownsampleScale()
-        let denominator = Float(max(filteredImages.count - 1, 1))
+        let denominator = Float(max(filteredCandidates.count - 1, 1))
 
-        for (index, image) in filteredImages.enumerated() {
+        for (index, candidate) in filteredCandidates.enumerated() {
             let components = calculateSharpnessComponents(
-                of: image,
+                of: candidate.image,
                 downsampleScale: downsampleScale,
                 centerCropRatio: centerCropRatio
             )
             let recencyBoost = (Float(index) / denominator) * recencyWeight
-            let score = components.global + (components.center * centerWeight) + recencyBoost
+            let motionPenalty = candidate.frame.motionScore
+                .map { Float(max($0 - AppConstants.Camera.capturePreferredMotionScore, 0)) * 0.08 }
+                ?? 0
+            let score = components.global + (components.center * centerWeight) + recencyBoost - motionPenalty
 
             if score > bestScore {
                 bestScore = score
-                bestFrame = image
+                bestFrame = FrameSelection(
+                    image: candidate.image,
+                    score: score,
+                    motionScore: candidate.frame.motionScore
+                )
             }
+        }
+
+        guard bestScore >= AppConstants.Camera.captureMinimumSharpnessScore else {
+            #if DEBUG
+            print("⚠️ Sharpness below threshold: \(String(format: "%.4f", bestScore))")
+            #endif
+            return nil
         }
 
         return bestFrame
@@ -840,8 +1141,11 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     }
 
     private nonisolated func sharpnessSampleCount(for availableCount: Int) -> Int {
-        let defaultSampleCount = 5
-        let lowPowerSampleCount = 3
+        let defaultSampleCount = min(
+            AppConstants.Camera.freshCaptureMinFrameCount + 1,
+            AppConstants.Camera.recentFrameBufferSize
+        )
+        let lowPowerSampleCount = AppConstants.Camera.lowPowerSharpnessSampleCount
         let preferredCount = ProcessInfo.processInfo.isLowPowerModeEnabled
             ? lowPowerSampleCount
             : defaultSampleCount
@@ -849,11 +1153,9 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     }
 
     private nonisolated func sharpnessDownsampleScale() -> CGFloat {
-        let defaultScale: CGFloat = 0.25
-        let lowPowerScale: CGFloat = 0.18
         return ProcessInfo.processInfo.isLowPowerModeEnabled
-            ? lowPowerScale
-            : defaultScale
+            ? AppConstants.Camera.lowPowerSharpnessDownsampleScale
+            : AppConstants.Camera.defaultSharpnessDownsampleScale
     }
 
     // MARK: - 후처리 (샤프닝)

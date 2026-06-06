@@ -98,46 +98,71 @@ enum AppConstants {
     
     enum Camera {
         /// 최소 줌 배율
-        static let minimumZoomFactor: CGFloat = 1.0
+        nonisolated static let minimumZoomFactor: CGFloat = 1.0
 
         /// 최대 줌 배율 (품질 저하 방지를 위해 앱에서 제한)
-        static let maximumZoomFactor: CGFloat = 5.0
+        nonisolated static let maximumZoomFactor: CGFloat = 5.0
 
         /// 프레임 대기 최대 반복 횟수
-        static let maxFrameWaitAttempts = 20
+        nonisolated static let maxFrameWaitAttempts = 20
         
         /// 프레임 대기 간격 (초)
-        static let frameWaitInterval: TimeInterval = 0.05
+        nonisolated static let frameWaitInterval: TimeInterval = 0.05
         
         /// JPEG 압축 품질 (0.0 ~ 1.0)
-        static let jpegCompressionQuality: CGFloat = 0.9
+        nonisolated static let jpegCompressionQuality: CGFloat = 0.9
 
         /// 줌 인디케이터 표시 유지 시간
-        static let zoomIndicatorDismissDelay: TimeInterval = 1.2
+        nonisolated static let zoomIndicatorDismissDelay: TimeInterval = 1.2
 
         /// 셔터 시점에 평가할 최근 프레임 개수
-        static let recentFrameBufferSize: Int = 5
+        nonisolated static let recentFrameBufferSize: Int = 12
+
+        /// 촬영 요청 이후 새로 확보해야 하는 최소 프레임 수
+        nonisolated static let freshCaptureMinFrameCount: Int = 4
+
+        /// 촬영 요청 이후 새 프레임을 기다리는 최대 시간
+        nonisolated static let freshCaptureFrameWaitTimeout: TimeInterval = 0.32
+
+        /// 첫 새 프레임 묶음이 기준 미달일 때 추가로 기다리는 최대 시간
+        nonisolated static let freshCaptureRetryWaitTimeout: TimeInterval = 0.34
 
         /// 세션 시작/카메라 전환 직후 첫 촬영 전에 잠깐 안정화 대기 시간
-        static let initialCaptureSettleDelay: TimeInterval = 0.25
-
-        /// 첫 촬영 시 버퍼가 채워지길 기다리는 최대 시간
-        static let initialCaptureBufferWaitTimeout: TimeInterval = 0.4
-
-        /// 첫 촬영 시 최소 확보할 최근 프레임 수
-        static let initialCaptureMinBufferedFrames: Int = 5
+        nonisolated static let initialCaptureSettleDelay: TimeInterval = 0.12
 
         /// 저전력 모드에서 선명도 평가 프레임 수(지연 절감)
-        static let lowPowerSharpnessSampleCount: Int = 3
+        nonisolated static let lowPowerSharpnessSampleCount: Int = 3
 
         /// 선명도 평가 시 기본 다운샘플 비율
-        static let defaultSharpnessDownsampleScale: CGFloat = 0.25
+        nonisolated static let defaultSharpnessDownsampleScale: CGFloat = 0.20
 
         /// 저전력 모드에서 선명도 평가 다운샘플 비율
-        static let lowPowerSharpnessDownsampleScale: CGFloat = 0.18
+        nonisolated static let lowPowerSharpnessDownsampleScale: CGFloat = 0.16
 
         /// 카메라 전환 시 프리뷰를 가려둘 최소 시간
-        static let cameraSwitchOverlayHoldDuration: TimeInterval = 0.45
+        nonisolated static let cameraSwitchOverlayHoldDuration: TimeInterval = 0.45
+
+        /// 촬영 전 초점/노출이 안정되기를 기다리는 최대 시간
+        nonisolated static let captureReadinessTimeout: TimeInterval = 0.24
+
+        /// 촬영 전 손 움직임이 줄어들기를 기다리는 최대 시간
+        nonisolated static let captureMotionSettleTimeout: TimeInterval = 0.28
+
+        /// 흔들림이 안정됐다고 볼 연속 샘플 수
+        nonisolated static let captureMotionStableSampleCount: Int = 2
+
+        /// 저장 후보로 선호하는 움직임 점수
+        nonisolated static let capturePreferredMotionScore: Double = 0.75
+
+        /// 저장 후보로 허용하는 최대 움직임 점수
+        nonisolated static let captureMaxMotionScore: Double = 1.45
+
+        /// 저장 후보로 허용하는 최소 선명도 점수
+        nonisolated static let captureMinimumSharpnessScore: Float = 0.020
+
+        /// 최종 선택 시 너무 오래된 프레임을 제외하는 시간
+        nonisolated static let captureMaxCandidateAge: TimeInterval = 0.55
+
     }
     
     // MARK: - UserDefaults Keys

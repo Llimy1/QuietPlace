@@ -6,6 +6,8 @@
 	<string>ca-app-pub-6697014301380374~8022690431</string>
 	<key>NSUserTrackingUsageDescription</key>
 	<string>맞춤형 광고를 제공하기 위해 추적 권한이 필요합니다</string>
+	<key>NSMotionUsageDescription</key>
+	<string>촬영 중 흔들림을 감지하여 더 선명한 사진을 저장하기 위해 기기 움직임 정보를 사용합니다</string>
 	<key>SKAdNetworkItems</key>
 	<array>
 		<dict>
