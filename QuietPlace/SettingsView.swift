@@ -128,12 +128,44 @@ struct SettingsView: View {
                     // 카메라 섹션
                     SettingsSection(title: "카메라") {
                         VStack(spacing: 0) {
+                            // 사진 비율 선택 (4:3 = 기본 카메라와 동일 화각)
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("사진 비율")
+                                        .font(.system(size: 17, weight: .regular))
+                                        .foregroundColor(.primary)
+
+                                    Text("4:3은 기본 카메라와 같은 화각으로 더 넓게 찍힙니다")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Spacer()
+
+                                Picker("사진 비율", selection: $settingsManager.photoAspectRatio) {
+                                    ForEach(PhotoAspectRatio.allCases) { ratio in
+                                        Text(ratio.rawValue).tag(ratio)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .frame(width: 130)
+                                .labelsHidden()
+                                .onChange(of: settingsManager.photoAspectRatio) { _, ratio in
+                                    CameraManager.shared.updateAspectRatio(ratio)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+
+                            Divider()
+                                .padding(.leading, 16)
+
                             SettingsRow(
                                 title: "최대 해상도",
                                 value: cameraManager.currentResolutionLabel,
                                 showArrow: false
                             )
-                            
+
                             Divider()
                                 .padding(.leading, 16)
                             

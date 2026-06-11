@@ -212,6 +212,7 @@ class CameraManager: NSObject, ObservableObject {
     
     func setupCamera() async {
         let stabilizationEnabled = SettingsManager.shared.isStabilizationEnabled
+        let aspectRatio = SettingsManager.shared.photoAspectRatio
 
         await withCheckedContinuation { continuation in
             sessionQueue.async { [weak self] in
@@ -227,22 +228,9 @@ class CameraManager: NSObject, ObservableObject {
                 }
                 
                 self.session.beginConfiguration()
-                
-                // 최고 해상도 설정 (4K 우선, 폴백: 1080p → photo)
-                let resolutionLabel: String
-                if self.session.canSetSessionPreset(.hd4K3840x2160) {
-                    self.session.sessionPreset = .hd4K3840x2160
-                    resolutionLabel = "4K (3840×2160)"
-                    debugPrint("📸 Using 4K resolution (3840x2160)")
-                } else if self.session.canSetSessionPreset(.hd1920x1080) {
-                    self.session.sessionPreset = .hd1920x1080
-                    resolutionLabel = "Full HD (1920×1080)"
-                    debugPrint("📸 Using Full HD resolution (1920x1080)")
-                } else {
-                    self.session.sessionPreset = .photo
-                    resolutionLabel = "표준 (Photo)"
-                    debugPrint("📸 Using photo preset")
-                }
+
+                // 화면비 설정에 따른 세션 프리셋 (4:3 = 기본 카메라와 동일 화각)
+                let resolutionLabel = self.applySessionPreset(for: aspectRatio)
                 Task { @MainActor in
                     self.currentResolutionLabel = resolutionLabel
                 }
@@ -472,8 +460,71 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
     
+    // MARK: - Aspect Ratio Control
+
+    /// 화면비에 맞는 세션 프리셋을 적용하고 해상도 라벨을 반환 (sessionQueue에서 호출)
+    private nonisolated func applySessionPreset(for aspectRatio: PhotoAspectRatio) -> String {
+        if aspectRatio == .fourByThree, session.canSetSessionPreset(.photo) {
+            session.sessionPreset = .photo
+            debugPrint("📸 Using photo preset (4:3)")
+            return "4:3 (최대 해상도)"
+        }
+
+        // 16:9 (4K 우선, 폴백: 1080p → photo)
+        if session.canSetSessionPreset(.hd4K3840x2160) {
+            session.sessionPreset = .hd4K3840x2160
+            debugPrint("📸 Using 4K resolution (3840x2160)")
+            return "16:9 4K (3840×2160)"
+        } else if session.canSetSessionPreset(.hd1920x1080) {
+            session.sessionPreset = .hd1920x1080
+            debugPrint("📸 Using Full HD resolution (1920x1080)")
+            return "16:9 Full HD (1920×1080)"
+        } else {
+            session.sessionPreset = .photo
+            debugPrint("📸 Using photo preset")
+            return "표준 (Photo)"
+        }
+    }
+
+    /// 설정 화면에서 화면비 변경 시 호출 (세션 유지한 채 프리셋만 교체)
+    func updateAspectRatio(_ aspectRatio: PhotoAspectRatio) {
+        let displayedZoom = currentZoomFactor
+        let stabilizationEnabled = SettingsManager.shared.isStabilizationEnabled
+
+        sessionQueue.async { [weak self] in
+            guard let self = self,
+                  !self.session.inputs.isEmpty else { return }
+
+            self.session.beginConfiguration()
+            let resolutionLabel = self.applySessionPreset(for: aspectRatio)
+            self.session.commitConfiguration()
+
+            // 이전 화면비로 찍힌 버퍼 프레임 폐기
+            self.resetRecentFrameBuffer()
+
+            // 프리셋 변경으로 포맷이 바뀌면 줌/스태빌라이제이션이 초기화될 수 있어 재적용
+            if let device = self.videoDeviceInput?.device {
+                let zoomScale = self.zoomDisplayScale
+                let appliedZoomFactor = self.applyZoomFactor(
+                    displayedZoom * zoomScale,
+                    to: device,
+                    displayScale: zoomScale
+                )
+                self.configureVideoStabilization(for: device, enabled: stabilizationEnabled)
+
+                Task { @MainActor in
+                    self.currentZoomFactor = appliedZoomFactor / zoomScale
+                }
+            }
+
+            Task { @MainActor in
+                self.currentResolutionLabel = resolutionLabel
+            }
+        }
+    }
+
     // MARK: - Stabilization Control
-    
+
     func updateStabilization(enabled: Bool) {
         sessionQueue.async { [weak self] in
             guard let self = self,

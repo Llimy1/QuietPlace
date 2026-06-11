@@ -9,6 +9,14 @@ import Foundation
 import SwiftUI
 import Combine
 
+/// 사진 화면비 (4:3 = 기본 카메라와 동일한 화각)
+enum PhotoAspectRatio: String, CaseIterable, Identifiable, Sendable {
+    case fourByThree = "4:3"
+    case sixteenByNine = "16:9"
+
+    var id: String { rawValue }
+}
+
 @MainActor
 class SettingsManager: ObservableObject {
     static let shared = SettingsManager()
@@ -58,6 +66,14 @@ class SettingsManager: ObservableObject {
             debugPrint("✅ Grid: \(isGridEnabled ? "ON" : "OFF")")
         }
     }
+
+    // 사진 화면비 (4:3 = 기본 카메라와 동일 화각, 16:9 = 와이드스크린)
+    @Published var photoAspectRatio: PhotoAspectRatio {
+        didSet {
+            UserDefaults.standard.set(photoAspectRatio.rawValue, forKey: "photoAspectRatio")
+            debugPrint("✅ Photo aspect ratio: \(photoAspectRatio.rawValue)")
+        }
+    }
     
     // 위장 모드 오버레이 불투명도 (30% ~ 80%)
     @Published var disguiseOverlayOpacity: Double {
@@ -90,6 +106,10 @@ class SettingsManager: ObservableObject {
 
         // 구도 그리드 (기본값: 활성화)
         self.isGridEnabled = UserDefaults.standard.object(forKey: "isGridEnabled") as? Bool ?? true
+
+        // 사진 화면비 (기본값: 4:3, 기본 카메라와 동일 화각)
+        let savedAspectRatio = UserDefaults.standard.string(forKey: "photoAspectRatio")
+        self.photoAspectRatio = savedAspectRatio.flatMap(PhotoAspectRatio.init(rawValue:)) ?? .fourByThree
         
         // 위장 모드 오버레이 불투명도 (기본값: 90%)
         let savedOpacity = UserDefaults.standard.object(forKey: "disguiseOverlayOpacity") as? Double ?? 0.90
@@ -107,6 +127,7 @@ class SettingsManager: ObservableObject {
         disguiseOverlayOpacity = 0.80
         isStabilizationEnabled = true
         isGridEnabled = true
+        photoAspectRatio = .fourByThree
         debugPrint("✅ Settings reset to defaults")
     }
 }
