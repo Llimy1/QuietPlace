@@ -150,9 +150,6 @@ struct SettingsView: View {
                                 .pickerStyle(.segmented)
                                 .frame(width: 130)
                                 .labelsHidden()
-                                .onChange(of: settingsManager.photoAspectRatio) { _, ratio in
-                                    CameraManager.shared.updateAspectRatio(ratio)
-                                }
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 12)

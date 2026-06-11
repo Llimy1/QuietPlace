@@ -231,6 +231,20 @@ struct CameraView: View {
                 Spacer()
 
                 HStack(spacing: 12) {
+                    // 사진 비율 전환 (4:3 ↔ 16:9)
+                    Button(action: {
+                        settingsManager.photoAspectRatio =
+                            settingsManager.photoAspectRatio == .fourByThree ? .sixteenByNine : .fourByThree
+                    }) {
+                        Text(settingsManager.photoAspectRatio.rawValue)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white)
+                            .monospacedDigit()
+                            .frame(width: 44, height: 44)
+                            .background(Color.black.opacity(0.4))
+                            .clipShape(Circle())
+                    }
+
                     Button(action: {
                         settingsManager.isGridEnabled.toggle()
                     }) {

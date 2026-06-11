@@ -72,6 +72,7 @@ class SettingsManager: ObservableObject {
         didSet {
             UserDefaults.standard.set(photoAspectRatio.rawValue, forKey: "photoAspectRatio")
             debugPrint("✅ Photo aspect ratio: \(photoAspectRatio.rawValue)")
+            CameraManager.shared.updateAspectRatio(photoAspectRatio)
         }
     }
     
