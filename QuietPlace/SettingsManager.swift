@@ -15,6 +15,26 @@ enum PhotoAspectRatio: String, CaseIterable, Identifiable, Sendable {
     case sixteenByNine = "16:9"
 
     var id: String { rawValue }
+
+    /// Portrait camera preview ratio. A 4:3 capture is displayed as 3:4 on a vertical screen.
+    var portraitPreviewAspectRatio: CGFloat {
+        switch self {
+        case .fourByThree:
+            return 3.0 / 4.0
+        case .sixteenByNine:
+            return 9.0 / 16.0
+        }
+    }
+
+    /// Raw video buffers are landscape before the UIImage orientation is applied.
+    var rawCaptureAspectRatio: CGFloat {
+        switch self {
+        case .fourByThree:
+            return 4.0 / 3.0
+        case .sixteenByNine:
+            return 16.0 / 9.0
+        }
+    }
 }
 
 @MainActor
@@ -132,5 +152,3 @@ class SettingsManager: ObservableObject {
         debugPrint("✅ Settings reset to defaults")
     }
 }
-
-

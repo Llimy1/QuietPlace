@@ -32,15 +32,24 @@ struct CameraView: View {
     @State private var showFocusIndicator = false
     @State private var focusTask: Task<Void, Never>? = nil
     @State private var zoomGestureStartFactor: CGFloat?
-    @State private var showZoomIndicator = false
-    @State private var zoomIndicatorTask: Task<Void, Never>?
+    @State private var showZoomPresetMenu = false
+    @State private var zoomPresetMenuTask: Task<Void, Never>?
     
     var body: some View {
         GeometryReader { geometry in
+            let previewSize = cameraPreviewSize(
+                in: geometry.size,
+                aspectRatio: settingsManager.photoAspectRatio.portraitPreviewAspectRatio
+            )
+
             ZStack {
-                // 풀스크린 카메라 프리뷰
-                CameraPreview(session: cameraManager.session)
+                Color.black
                     .ignoresSafeArea()
+
+                cameraPreviewSurface(size: previewSize)
+                    .frame(width: previewSize.width, height: previewSize.height)
+                    .clipped()
+                    .animation(.easeInOut(duration: 0.2), value: settingsManager.photoAspectRatio)
 
                 // 카메라 전환 중 파란 플래시 방지 오버레이 (새 카메라 첫 프레임 수신 시 페이드아웃)
                 Color.black
@@ -49,29 +58,6 @@ struct CameraView: View {
                     .opacity(cameraManager.isSwitchingCamera ? 1.0 : 0.0)
                     .animation(.easeOut(duration: 0.25), value: cameraManager.isSwitchingCamera)
 
-                if !settingsManager.isDisguiseMode && settingsManager.isGridEnabled {
-                    CameraGridOverlay()
-                        .ignoresSafeArea()
-                        .allowsHitTesting(false)
-                }
-                
-                // 탭 포커스 (위장 모드가 아닐 때만)
-                if !settingsManager.isDisguiseMode {
-                    Color.clear
-                        .ignoresSafeArea()
-                        .contentShape(Rectangle())
-                        .onTapGesture { location in
-                            focusAt(point: location, viewSize: geometry.size)
-                        }
-                        .simultaneousGesture(cameraZoomGesture)
-                    
-                    // 포커스 인디케이터
-                    if showFocusIndicator, let point = focusPoint {
-                        FocusIndicator()
-                            .position(point)
-                    }
-                }
-                
                 // 위장 모드 오버레이
                 if settingsManager.isDisguiseMode {
                     disguiseOverlay(geometry: geometry)
@@ -84,24 +70,6 @@ struct CameraView: View {
                         .allowsHitTesting(false)
                 }
 
-                if !settingsManager.isDisguiseMode &&
-                    (showZoomIndicator || abs(cameraManager.currentZoomFactor - AppConstants.Camera.defaultZoomFactor) > 0.01) {
-                    VStack {
-                        Text(zoomFactorText)
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.white)
-                            .monospacedDigit()
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(Color.black.opacity(0.45))
-                            .clipShape(Capsule())
-                            .padding(.top, 64)
-
-                        Spacer()
-                    }
-                    .allowsHitTesting(false)
-                }
-                
                 // 카메라 UI (위장 모드가 아닐 때만 표시)
                 if !settingsManager.isDisguiseMode {
                     cameraUIOverlay(geometry: geometry)
@@ -154,6 +122,11 @@ struct CameraView: View {
                 } else {
                     stopClock()
                 }
+            }
+            .onChange(of: settingsManager.photoAspectRatio) { _, _ in
+                focusTask?.cancel()
+                focusPoint = nil
+                showFocusIndicator = false
             }
             .onAppear {
                 // 초기 1회만 카메라 설정 (fullScreenCover 복귀 시 중복 방지)
@@ -208,6 +181,53 @@ struct CameraView: View {
         }
     }
     
+    // MARK: - Camera Preview
+
+    @ViewBuilder
+    private func cameraPreviewSurface(size: CGSize) -> some View {
+        ZStack {
+            CameraPreview(session: cameraManager.session)
+
+            if !settingsManager.isDisguiseMode && settingsManager.isGridEnabled {
+                CameraGridOverlay()
+                    .allowsHitTesting(false)
+            }
+
+            if !settingsManager.isDisguiseMode {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { location in
+                        focusAt(point: location, viewSize: size)
+                    }
+                    .simultaneousGesture(cameraZoomGesture)
+
+                if showFocusIndicator, let point = focusPoint {
+                    FocusIndicator()
+                        .position(point)
+                }
+            }
+        }
+        .frame(width: size.width, height: size.height)
+    }
+
+    private func cameraPreviewSize(in containerSize: CGSize, aspectRatio: CGFloat) -> CGSize {
+        guard containerSize.width > 0,
+              containerSize.height > 0,
+              aspectRatio > 0 else {
+            return .zero
+        }
+
+        let widthBasedHeight = containerSize.width / aspectRatio
+        if widthBasedHeight <= containerSize.height {
+            return CGSize(width: containerSize.width, height: widthBasedHeight)
+        }
+
+        return CGSize(
+            width: containerSize.height * aspectRatio,
+            height: containerSize.height
+        )
+    }
+
     // MARK: - Camera UI Overlay
     
     @ViewBuilder
@@ -231,10 +251,14 @@ struct CameraView: View {
                 Spacer()
 
                 HStack(spacing: 12) {
+                    compactZoomControl()
+
                     // 사진 비율 전환 (4:3 ↔ 16:9)
                     Button(action: {
-                        settingsManager.photoAspectRatio =
-                            settingsManager.photoAspectRatio == .fourByThree ? .sixteenByNine : .fourByThree
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            settingsManager.photoAspectRatio =
+                                settingsManager.photoAspectRatio == .fourByThree ? .sixteenByNine : .fourByThree
+                        }
                     }) {
                         Text(settingsManager.photoAspectRatio.rawValue)
                             .font(.system(size: 13, weight: .semibold))
@@ -275,11 +299,18 @@ struct CameraView: View {
                 .padding(.trailing, 20)
                 .padding(.top, 10)
             }
+
+            if showZoomPresetMenu {
+                HStack {
+                    Spacer()
+                    zoomPresetMenu()
+                        .padding(.trailing, 20)
+                }
+                .padding(.top, 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
             
             Spacer()
-
-            quickZoomControls()
-                .padding(.bottom, 18)
             
             // 하단 바: 촬영 버튼 중앙 고정, 양쪽 대칭
 //            ZStack {
@@ -441,21 +472,34 @@ struct CameraView: View {
     }
 
     @ViewBuilder
-    private func quickZoomControls() -> some View {
-        HStack(spacing: 12) {
+    private func compactZoomControl() -> some View {
+        Button(action: toggleZoomPresetMenu) {
+            Text(zoomFactorText)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .frame(width: 44, height: 44)
+                .background(Color.black.opacity(showZoomPresetMenu ? 0.58 : 0.4))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func zoomPresetMenu() -> some View {
+        HStack(spacing: 8) {
             ForEach(quickZoomPresets, id: \.self) { preset in
                 Button(action: {
-                    showZoomIndicator = true
-                    zoomIndicatorTask?.cancel()
-                    cameraManager.setZoomFactor(preset)
-                    scheduleZoomIndicatorDismiss()
+                    selectZoomPreset(preset)
                 }) {
                     Text(zoomPresetLabel(preset))
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(isZoomPresetSelected(preset) ? .black : .white)
-                        .frame(minWidth: 52)
+                        .frame(minWidth: 48)
                         .padding(.vertical, 8)
-                        .padding(.horizontal, 10)
+                        .padding(.horizontal, 8)
                         .background(
                             Capsule()
                                 .fill(isZoomPresetSelected(preset) ? Color.white : Color.black.opacity(0.35))
@@ -467,6 +511,29 @@ struct CameraView: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.black.opacity(0.28))
+        .clipShape(Capsule())
+    }
+
+    private func toggleZoomPresetMenu() {
+        zoomPresetMenuTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.18)) {
+            showZoomPresetMenu.toggle()
+        }
+
+        if showZoomPresetMenu {
+            scheduleZoomPresetMenuDismiss()
+        }
+    }
+
+    private func selectZoomPreset(_ preset: CGFloat) {
+        zoomPresetMenuTask?.cancel()
+        cameraManager.setZoomFactor(preset)
+        withAnimation(.easeOut(duration: 0.16)) {
+            showZoomPresetMenu = false
         }
     }
     
@@ -623,33 +690,44 @@ struct CameraView: View {
                 }
 
                 let startFactor = zoomGestureStartFactor ?? cameraManager.currentZoomFactor
-                showZoomIndicator = true
-                zoomIndicatorTask?.cancel()
+                zoomPresetMenuTask?.cancel()
+                if showZoomPresetMenu {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        showZoomPresetMenu = false
+                    }
+                }
                 cameraManager.setZoomFactor(startFactor * value)
             }
             .onEnded { _ in
                 zoomGestureStartFactor = nil
-                scheduleZoomIndicatorDismiss()
             }
     }
 
     private var zoomFactorText: String {
-        String(format: "%.1fx", cameraManager.currentZoomFactor)
+        let zoomFactor = cameraManager.currentZoomFactor
+        let roundedZoomFactor = zoomFactor.rounded()
+        if abs(zoomFactor - roundedZoomFactor) < 0.05 {
+            return "\(Int(roundedZoomFactor))x"
+        }
+
+        return String(format: "%.1fx", zoomFactor)
     }
 
     private func isZoomPresetSelected(_ preset: CGFloat) -> Bool {
         abs(cameraManager.currentZoomFactor - preset) < 0.15
     }
 
-    private func scheduleZoomIndicatorDismiss() {
-        zoomIndicatorTask?.cancel()
-        zoomIndicatorTask = Task {
+    private func scheduleZoomPresetMenuDismiss() {
+        zoomPresetMenuTask?.cancel()
+        zoomPresetMenuTask = Task {
             try? await Task.sleep(
                 for: .seconds(AppConstants.Camera.zoomIndicatorDismissDelay)
             )
 
             guard !Task.isCancelled else { return }
-            showZoomIndicator = false
+            withAnimation(.easeOut(duration: 0.16)) {
+                showZoomPresetMenu = false
+            }
         }
     }
     

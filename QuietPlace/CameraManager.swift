@@ -462,65 +462,48 @@ class CameraManager: NSObject, ObservableObject {
     
     // MARK: - Aspect Ratio Control
 
-    /// 화면비에 맞는 세션 프리셋을 적용하고 해상도 라벨을 반환 (sessionQueue에서 호출)
+    /// 무음 비디오 캡처가 끊기지 않도록 안정적인 비디오 프리셋을 적용하고 해상도 라벨을 반환합니다.
     private nonisolated func applySessionPreset(for aspectRatio: PhotoAspectRatio) -> String {
-        if aspectRatio == .fourByThree, session.canSetSessionPreset(.photo) {
-            session.sessionPreset = .photo
-            debugPrint("📸 Using photo preset (4:3)")
-            return "4:3 (최대 해상도)"
-        }
-
-        // 16:9 (4K 우선, 폴백: 1080p → photo)
         if session.canSetSessionPreset(.hd4K3840x2160) {
             session.sessionPreset = .hd4K3840x2160
-            debugPrint("📸 Using 4K resolution (3840x2160)")
-            return "16:9 4K (3840×2160)"
+            print("📸 Using 4K resolution (3840x2160)")
+            return aspectRatio == .fourByThree ? "4:3 (4K 기반)" : "16:9 4K (3840×2160)"
         } else if session.canSetSessionPreset(.hd1920x1080) {
             session.sessionPreset = .hd1920x1080
-            debugPrint("📸 Using Full HD resolution (1920x1080)")
-            return "16:9 Full HD (1920×1080)"
+            print("📸 Using Full HD resolution (1920x1080)")
+            return aspectRatio == .fourByThree ? "4:3 (FHD 기반)" : "16:9 Full HD (1920×1080)"
         } else {
-            session.sessionPreset = .photo
-            debugPrint("📸 Using photo preset")
-            return "표준 (Photo)"
+            session.sessionPreset = .high
+            print("📸 Using high video preset")
+            return aspectRatio.rawValue
         }
     }
 
-    /// 설정 화면에서 화면비 변경 시 호출 (세션 유지한 채 프리셋만 교체)
+    /// 설정 화면에서 화면비 변경 시 호출. 프리뷰 끊김을 막기 위해 실행 중인 세션 프리셋은 바꾸지 않습니다.
     func updateAspectRatio(_ aspectRatio: PhotoAspectRatio) {
-        let displayedZoom = currentZoomFactor
-        let stabilizationEnabled = SettingsManager.shared.isStabilizationEnabled
-
         sessionQueue.async { [weak self] in
             guard let self = self,
                   !self.session.inputs.isEmpty else { return }
 
-            self.session.beginConfiguration()
-            let resolutionLabel = self.applySessionPreset(for: aspectRatio)
-            self.session.commitConfiguration()
-
             // 이전 화면비로 찍힌 버퍼 프레임 폐기
             self.resetRecentFrameBuffer()
 
-            // 프리셋 변경으로 포맷이 바뀌면 줌/스태빌라이제이션이 초기화될 수 있어 재적용
-            if let device = self.videoDeviceInput?.device {
-                let zoomScale = self.zoomDisplayScale
-                let appliedZoomFactor = self.applyZoomFactor(
-                    displayedZoom * zoomScale,
-                    to: device,
-                    displayScale: zoomScale
-                )
-                self.configureVideoStabilization(for: device, enabled: stabilizationEnabled)
-
-                Task { @MainActor in
-                    self.currentZoomFactor = appliedZoomFactor / zoomScale
-                }
-            }
-
             Task { @MainActor in
-                self.currentResolutionLabel = resolutionLabel
+                self.currentResolutionLabel = self.resolutionLabel(for: aspectRatio)
             }
         }
+    }
+
+    private func resolutionLabel(for aspectRatio: PhotoAspectRatio) -> String {
+        if session.sessionPreset == .hd4K3840x2160 {
+            return aspectRatio == .fourByThree ? "4:3 (4K 기반)" : "16:9 4K (3840×2160)"
+        }
+
+        if session.sessionPreset == .hd1920x1080 {
+            return aspectRatio == .fourByThree ? "4:3 (FHD 기반)" : "16:9 Full HD (1920×1080)"
+        }
+
+        return aspectRatio.rawValue
     }
 
     // MARK: - Stabilization Control
@@ -733,6 +716,7 @@ class CameraManager: NSObject, ObservableObject {
             return nil
         }
         defer { finishPhotoCapture() }
+        let captureAspectRatio = SettingsManager.shared.photoAspectRatio
 
         if !isFrameReady {
             let waitStartTime = CFAbsoluteTimeGetCurrent()
@@ -774,7 +758,10 @@ class CameraManager: NSObject, ObservableObject {
             maxAge: AppConstants.Camera.captureMaxCandidateAge
         )
         if bufferedFrames.count >= targetFrames {
-            result = await renderBestBufferedFrame(from: bufferedFrames)
+            result = await renderBestBufferedFrame(
+                from: bufferedFrames,
+                aspectRatio: captureAspectRatio
+            )
             if result != nil {
                 debugPrint("⚡️ Fast path: captured from pre-shutter buffer")
             }
@@ -800,14 +787,16 @@ class CameraManager: NSObject, ObservableObject {
             result = await waitForBestFreshFrame(
                 afterSequence: startSequence,
                 minFrameCount: targetFrames,
-                timeout: AppConstants.Camera.freshCaptureFrameWaitTimeout
+                timeout: AppConstants.Camera.freshCaptureFrameWaitTimeout,
+                aspectRatio: captureAspectRatio
             )
 
             if result == nil {
                 result = await waitForBestFreshFrame(
                     afterSequence: startSequence,
                     minFrameCount: min(targetFrames + 2, AppConstants.Camera.recentFrameBufferSize),
-                    timeout: AppConstants.Camera.freshCaptureRetryWaitTimeout
+                    timeout: AppConstants.Camera.freshCaptureRetryWaitTimeout,
+                    aspectRatio: captureAspectRatio
                 )
             }
         }
@@ -848,7 +837,8 @@ class CameraManager: NSObject, ObservableObject {
     private func waitForBestFreshFrame(
         afterSequence startSequence: UInt64,
         minFrameCount: Int,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        aspectRatio: PhotoAspectRatio
     ) async -> UIImage? {
         let deadline = Date().addingTimeInterval(timeout)
         var lastFrames: [BufferedVideoFrame] = []
@@ -863,7 +853,10 @@ class CameraManager: NSObject, ObservableObject {
 
             if frames.count >= minFrameCount, frames.count != lastEvaluatedCount {
                 lastEvaluatedCount = frames.count
-                if let image = await renderBestBufferedFrame(from: frames) {
+                if let image = await renderBestBufferedFrame(
+                    from: frames,
+                    aspectRatio: aspectRatio
+                ) {
                     return image
                 }
             }
@@ -883,10 +876,16 @@ class CameraManager: NSObject, ObservableObject {
             return nil
         }
 
-        return await renderBestBufferedFrame(from: frames)
+        return await renderBestBufferedFrame(
+            from: frames,
+            aspectRatio: aspectRatio
+        )
     }
 
-    private func renderBestBufferedFrame(from bufferedFrames: [BufferedVideoFrame]) async -> UIImage? {
+    private func renderBestBufferedFrame(
+        from bufferedFrames: [BufferedVideoFrame],
+        aspectRatio: PhotoAspectRatio
+    ) async -> UIImage? {
         await withCheckedContinuation { continuation in
             self.processingQueue.async { [weak self] in
                 guard let self = self else {
@@ -907,7 +906,11 @@ class CameraManager: NSObject, ObservableObject {
                 }
 
                 let startTime = CFAbsoluteTimeGetCurrent()
-                let processedCIImage = self.applyPostProcessing(to: selectedFrame.image)
+                let croppedCIImage = self.aspectCroppedImage(
+                    selectedFrame.image,
+                    to: aspectRatio.rawCaptureAspectRatio
+                )
+                let processedCIImage = self.applyPostProcessing(to: croppedCIImage)
                 let p3ColorSpace = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
 
                 guard let cgImage = self.ciContext.createCGImage(
@@ -1233,6 +1236,41 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
             width: width,
             height: height
         )
+        return image.cropped(to: cropRect)
+    }
+
+    private nonisolated func aspectCroppedImage(_ image: CIImage, to targetAspectRatio: CGFloat) -> CIImage {
+        let extent = image.extent
+        guard extent.width > 1,
+              extent.height > 1,
+              targetAspectRatio > 0 else {
+            return image
+        }
+
+        let sourceAspectRatio = extent.width / extent.height
+        guard abs(sourceAspectRatio - targetAspectRatio) > 0.001 else {
+            return image
+        }
+
+        let cropRect: CGRect
+        if sourceAspectRatio > targetAspectRatio {
+            let width = extent.height * targetAspectRatio
+            cropRect = CGRect(
+                x: extent.midX - (width / 2),
+                y: extent.minY,
+                width: width,
+                height: extent.height
+            )
+        } else {
+            let height = extent.width / targetAspectRatio
+            cropRect = CGRect(
+                x: extent.minX,
+                y: extent.midY - (height / 2),
+                width: extent.width,
+                height: height
+            )
+        }
+
         return image.cropped(to: cropRect)
     }
 
