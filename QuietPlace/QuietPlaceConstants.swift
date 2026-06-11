@@ -97,10 +97,13 @@ enum AppConstants {
     // MARK: - Camera
     
     enum Camera {
-        /// 최소 줌 배율
-        nonisolated static let minimumZoomFactor: CGFloat = 1.0
+        /// 기본 줌 배율 (표시 기준, 1x = 와이드 카메라)
+        nonisolated static let defaultZoomFactor: CGFloat = 1.0
 
-        /// 최대 줌 배율 (품질 저하 방지를 위해 앱에서 제한)
+        /// 울트라와이드 카메라 표시 줌 배율
+        nonisolated static let ultraWideZoomFactor: CGFloat = 0.5
+
+        /// 최대 줌 배율 (표시 기준, 품질 저하 방지를 위해 앱에서 제한)
         nonisolated static let maximumZoomFactor: CGFloat = 5.0
 
         /// 프레임 대기 최대 반복 횟수
@@ -122,10 +125,10 @@ enum AppConstants {
         nonisolated static let freshCaptureMinFrameCount: Int = 4
 
         /// 촬영 요청 이후 새 프레임을 기다리는 최대 시간
-        nonisolated static let freshCaptureFrameWaitTimeout: TimeInterval = 0.32
+        nonisolated static let freshCaptureFrameWaitTimeout: TimeInterval = 0.22
 
         /// 첫 새 프레임 묶음이 기준 미달일 때 추가로 기다리는 최대 시간
-        nonisolated static let freshCaptureRetryWaitTimeout: TimeInterval = 0.34
+        nonisolated static let freshCaptureRetryWaitTimeout: TimeInterval = 0.22
 
         /// 세션 시작/카메라 전환 직후 첫 촬영 전에 잠깐 안정화 대기 시간
         nonisolated static let initialCaptureSettleDelay: TimeInterval = 0.12
@@ -142,11 +145,11 @@ enum AppConstants {
         /// 카메라 전환 시 프리뷰를 가려둘 최소 시간
         nonisolated static let cameraSwitchOverlayHoldDuration: TimeInterval = 0.45
 
-        /// 촬영 전 초점/노출이 안정되기를 기다리는 최대 시간
-        nonisolated static let captureReadinessTimeout: TimeInterval = 0.24
+        /// 촬영 전 초점/노출이 안정되기를 기다리는 최대 시간 (버퍼 빠른 경로 실패 시에만 사용)
+        nonisolated static let captureReadinessTimeout: TimeInterval = 0.12
 
-        /// 촬영 전 손 움직임이 줄어들기를 기다리는 최대 시간
-        nonisolated static let captureMotionSettleTimeout: TimeInterval = 0.28
+        /// 촬영 전 손 움직임이 줄어들기를 기다리는 최대 시간 (버퍼 빠른 경로 실패 시에만 사용)
+        nonisolated static let captureMotionSettleTimeout: TimeInterval = 0.15
 
         /// 흔들림이 안정됐다고 볼 연속 샘플 수
         nonisolated static let captureMotionStableSampleCount: Int = 2

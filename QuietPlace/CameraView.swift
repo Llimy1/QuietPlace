@@ -85,7 +85,7 @@ struct CameraView: View {
                 }
 
                 if !settingsManager.isDisguiseMode &&
-                    (showZoomIndicator || cameraManager.currentZoomFactor > AppConstants.Camera.minimumZoomFactor + 0.01) {
+                    (showZoomIndicator || abs(cameraManager.currentZoomFactor - AppConstants.Camera.defaultZoomFactor) > 0.01) {
                     VStack {
                         Text(zoomFactorText)
                             .font(.system(size: 16, weight: .semibold))
@@ -413,10 +413,21 @@ struct CameraView: View {
         }
     }
 
+    // 울트라와이드 지원 기기에서만 0.5x 프리셋 노출 (전면 카메라 전환 시 자동 제외)
+    private var quickZoomPresets: [CGFloat] {
+        let basePresets: [CGFloat] = [1, 2, 5]
+        if cameraManager.minimumZoomFactor <= AppConstants.Camera.ultraWideZoomFactor + 0.05 {
+            return [AppConstants.Camera.ultraWideZoomFactor] + basePresets
+        }
+        return basePresets
+    }
+
+    private func zoomPresetLabel(_ preset: CGFloat) -> String {
+        preset < 1 ? String(format: "%.1fx", preset) : "\(Int(preset))x"
+    }
+
     @ViewBuilder
     private func quickZoomControls() -> some View {
-        let quickZoomPresets: [CGFloat] = [1, 2, 5]
-
         HStack(spacing: 12) {
             ForEach(quickZoomPresets, id: \.self) { preset in
                 Button(action: {
@@ -425,7 +436,7 @@ struct CameraView: View {
                     cameraManager.setZoomFactor(preset)
                     scheduleZoomIndicatorDismiss()
                 }) {
-                    Text("\(Int(preset))x")
+                    Text(zoomPresetLabel(preset))
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(isZoomPresetSelected(preset) ? .black : .white)
                         .frame(minWidth: 52)

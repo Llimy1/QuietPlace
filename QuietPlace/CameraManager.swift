@@ -22,7 +22,8 @@ class CameraManager: NSObject, ObservableObject {
     @Published var showError: Bool = false
     @Published var isUsingFrontCamera = false
     @Published var currentResolutionLabel = "-"
-    @Published var currentZoomFactor: CGFloat = AppConstants.Camera.minimumZoomFactor
+    @Published var currentZoomFactor: CGFloat = AppConstants.Camera.defaultZoomFactor
+    @Published var minimumZoomFactor: CGFloat = AppConstants.Camera.defaultZoomFactor
     @Published var isSwitchingCamera = false
 
     // Camera session
@@ -49,6 +50,9 @@ class CameraManager: NSObject, ObservableObject {
     nonisolated(unsafe) private var _hasCapturedSinceReset = false
     nonisolated(unsafe) private var _latestMotionScore: Double?
     nonisolated(unsafe) private var _latestFrameSequence: UInt64 = 0
+
+    // 표시 줌 1x에 해당하는 실제 videoZoomFactor (가상 듀얼 와이드 카메라는 2.0 부근, sessionQueue에서만 접근)
+    nonisolated(unsafe) private var zoomDisplayScale: CGFloat = 1.0
 
     // 최근 프레임 버퍼 (셔터 직전 프레임들에서 즉시 선택)
     nonisolated(unsafe) private var recentFrameBuffer: [BufferedVideoFrame] = []
@@ -244,11 +248,11 @@ class CameraManager: NSObject, ObservableObject {
                 }
                 
                 do {
-                    // 후면 카메라
-                    guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
+                    // 후면 카메라 (울트라와이드 포함 듀얼 와이드 우선, 0.5x 줌아웃 지원)
+                    guard let camera = self.bestCaptureDevice(for: .back) else {
                         throw NSError(domain: "CameraManager", code: -1)
                     }
-                    
+
                     // 입력 추가
                     let input = try AVCaptureDeviceInput(device: camera)
                     if self.session.canAddInput(input) {
@@ -290,16 +294,22 @@ class CameraManager: NSObject, ObservableObject {
                         camera.whiteBalanceMode = .continuousAutoWhiteBalance
                     }
 
+                    let zoomScale = self.displayZoomScale(for: camera)
+                    self.zoomDisplayScale = zoomScale
+
                     let appliedZoomFactor = self.clampedZoomFactor(
-                        AppConstants.Camera.minimumZoomFactor,
-                        for: camera
+                        AppConstants.Camera.defaultZoomFactor * zoomScale,
+                        for: camera,
+                        displayScale: zoomScale
                     )
                     camera.videoZoomFactor = appliedZoomFactor
-                    
+
                     camera.unlockForConfiguration()
 
+                    let minimumDisplayZoom = camera.minAvailableVideoZoomFactor / zoomScale
                     Task { @MainActor in
-                        self.currentZoomFactor = appliedZoomFactor
+                        self.currentZoomFactor = appliedZoomFactor / zoomScale
+                        self.minimumZoomFactor = minimumDisplayZoom
                     }
                     
                 } catch {
@@ -348,7 +358,7 @@ class CameraManager: NSObject, ObservableObject {
             let currentPosition = self.videoDeviceInput?.device.position ?? .back
             let newPosition: AVCaptureDevice.Position = currentPosition == .back ? .front : .back
 
-            guard let newDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition) else {
+            guard let newDevice = self.bestCaptureDevice(for: newPosition) else {
                 Task { @MainActor in self.isSwitchingCamera = false }
                 return
             }
@@ -380,12 +390,20 @@ class CameraManager: NSObject, ObservableObject {
                     for: newDevice,
                     enabled: stabilizationEnabled
                 )
-                let appliedZoomFactor = self.applyZoomFactor(currentZoomFactor, to: newDevice)
+                let newZoomScale = self.displayZoomScale(for: newDevice)
+                self.zoomDisplayScale = newZoomScale
+                let appliedZoomFactor = self.applyZoomFactor(
+                    currentZoomFactor * newZoomScale,
+                    to: newDevice,
+                    displayScale: newZoomScale
+                )
+                let minimumDisplayZoom = newDevice.minAvailableVideoZoomFactor / newZoomScale
 
                 self.isFrontCamera = (newPosition == .front)
                 Task { @MainActor in
                     self.isUsingFrontCamera = (newPosition == .front)
-                    self.currentZoomFactor = appliedZoomFactor
+                    self.currentZoomFactor = appliedZoomFactor / newZoomScale
+                    self.minimumZoomFactor = minimumDisplayZoom
                 }
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(
@@ -467,34 +485,62 @@ class CameraManager: NSObject, ObservableObject {
 
     // MARK: - Zoom Control
 
+    /// 표시 줌 배율(0.5x~5x)을 받아 실제 videoZoomFactor로 변환해 적용
     func setZoomFactor(_ zoomFactor: CGFloat) {
         sessionQueue.async { [weak self] in
             guard let self = self,
                   let device = self.videoDeviceInput?.device else { return }
 
-            let appliedZoomFactor = self.applyZoomFactor(zoomFactor, to: device)
+            let zoomScale = self.zoomDisplayScale
+            let appliedZoomFactor = self.applyZoomFactor(
+                zoomFactor * zoomScale,
+                to: device,
+                displayScale: zoomScale
+            )
 
             Task { @MainActor in
-                self.currentZoomFactor = appliedZoomFactor
+                self.currentZoomFactor = appliedZoomFactor / zoomScale
             }
         }
     }
 
-    private nonisolated func clampedZoomFactor(_ zoomFactor: CGFloat, for device: AVCaptureDevice) -> CGFloat {
-        let minimumZoomFactor = max(
-            device.minAvailableVideoZoomFactor,
-            1.0
-        )
+    /// 위치별 최적 캡처 디바이스 (후면: 듀얼 와이드 가상 카메라 우선 → 0.5x 지원)
+    private nonisolated func bestCaptureDevice(for position: AVCaptureDevice.Position) -> AVCaptureDevice? {
+        if position == .back,
+           let dualWide = AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: .back) {
+            return dualWide
+        }
+        return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
+    }
+
+    /// 표시 줌 1x에 해당하는 실제 videoZoomFactor (가상 카메라는 줌 1.0이 울트라와이드)
+    private nonisolated func displayZoomScale(for device: AVCaptureDevice) -> CGFloat {
+        guard let switchOverFactor = device.virtualDeviceSwitchOverVideoZoomFactors.first else {
+            return 1.0
+        }
+        return CGFloat(truncating: switchOverFactor)
+    }
+
+    private nonisolated func clampedZoomFactor(
+        _ zoomFactor: CGFloat,
+        for device: AVCaptureDevice,
+        displayScale: CGFloat
+    ) -> CGFloat {
+        let minimumZoomFactor = device.minAvailableVideoZoomFactor
         let maximumZoomFactor = min(
             device.maxAvailableVideoZoomFactor,
-            5.0
+            AppConstants.Camera.maximumZoomFactor * displayScale
         )
 
         return min(max(zoomFactor, minimumZoomFactor), max(maximumZoomFactor, minimumZoomFactor))
     }
 
-    private nonisolated func applyZoomFactor(_ zoomFactor: CGFloat, to device: AVCaptureDevice) -> CGFloat {
-        let clampedZoomFactor = clampedZoomFactor(zoomFactor, for: device)
+    private nonisolated func applyZoomFactor(
+        _ zoomFactor: CGFloat,
+        to device: AVCaptureDevice,
+        displayScale: CGFloat
+    ) -> CGFloat {
+        let clampedZoomFactor = clampedZoomFactor(zoomFactor, for: device, displayScale: displayScale)
 
         do {
             try device.lockForConfiguration()
@@ -664,38 +710,55 @@ class CameraManager: NSObject, ObservableObject {
             }
         }
 
-        let motionReady = await waitForMotionToSettle(
-            timeout: AppConstants.Camera.captureMotionSettleTimeout
-        )
-        if !motionReady {
-            debugPrint("⚠️ Motion still high; relying on frame quality gate")
-        }
-
-        let cameraReady = await waitForCameraReadiness(
-            timeout: AppConstants.Camera.captureReadinessTimeout
-        )
-        if !cameraReady {
-            debugPrint("⚠️ Capturing before camera adjustment fully settled")
-        }
-
-        let startSequence = beginFreshFrameWindow()
         let targetFrames = min(
             AppConstants.Camera.freshCaptureMinFrameCount,
             AppConstants.Camera.recentFrameBufferSize
         )
 
-        var result = await waitForBestFreshFrame(
-            afterSequence: startSequence,
-            minFrameCount: targetFrames,
-            timeout: AppConstants.Camera.freshCaptureFrameWaitTimeout
+        // ⚡️ 빠른 경로: 셔터 직전까지 버퍼에 쌓인 프레임을 대기 없이 즉시 평가
+        // (흔들림/초점/선명도 게이트는 selectSharpestFrame에서 동일하게 적용됨)
+        var result: UIImage?
+        let bufferedFrames = frameSnapshot(
+            afterSequence: 0,
+            maxAge: AppConstants.Camera.captureMaxCandidateAge
         )
+        if bufferedFrames.count >= targetFrames {
+            result = await renderBestBufferedFrame(from: bufferedFrames)
+            if result != nil {
+                debugPrint("⚡️ Fast path: captured from pre-shutter buffer")
+            }
+        }
 
+        // 빠른 경로가 품질 기준을 통과하지 못한 경우에만 안정화 대기 후 새 프레임으로 재시도
         if result == nil {
+            let motionReady = await waitForMotionToSettle(
+                timeout: AppConstants.Camera.captureMotionSettleTimeout
+            )
+            if !motionReady {
+                debugPrint("⚠️ Motion still high; relying on frame quality gate")
+            }
+
+            let cameraReady = await waitForCameraReadiness(
+                timeout: AppConstants.Camera.captureReadinessTimeout
+            )
+            if !cameraReady {
+                debugPrint("⚠️ Capturing before camera adjustment fully settled")
+            }
+
+            let startSequence = beginFreshFrameWindow()
             result = await waitForBestFreshFrame(
                 afterSequence: startSequence,
-                minFrameCount: min(targetFrames + 2, AppConstants.Camera.recentFrameBufferSize),
-                timeout: AppConstants.Camera.freshCaptureRetryWaitTimeout
+                minFrameCount: targetFrames,
+                timeout: AppConstants.Camera.freshCaptureFrameWaitTimeout
             )
+
+            if result == nil {
+                result = await waitForBestFreshFrame(
+                    afterSequence: startSequence,
+                    minFrameCount: min(targetFrames + 2, AppConstants.Camera.recentFrameBufferSize),
+                    timeout: AppConstants.Camera.freshCaptureRetryWaitTimeout
+                )
+            }
         }
 
         let captureElapsed = CFAbsoluteTimeGetCurrent() - captureStartTime
