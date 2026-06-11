@@ -29,6 +29,13 @@ struct GalleryView: View {
     @State private var dragShouldSelect = true
     @State private var preDragSelection: Set<String> = []
 
+    // 가장자리 자동 스크롤 상태
+    @State private var scrollProxy: ScrollViewProxy?
+    @State private var scrollViewportSize: CGSize = .zero
+    @State private var lastDragLocation: CGPoint?
+    @State private var autoScrollDirection: AutoScrollDirection = .none
+    @State private var autoScrollTask: Task<Void, Never>?
+
     /// 셀 프레임과 드래그 좌표를 같은 기준으로 맞추기 위한 좌표공간 이름
     static let dragSelectionSpace = "gallerySelectionSpace"
 
@@ -37,6 +44,12 @@ struct GalleryView: View {
         case idle        // 방향 미정
         case selecting   // 가로 시작 → 드래그 선택
         case scrolling   // 세로 시작 → 스크롤에 양보
+    }
+
+    private enum AutoScrollDirection {
+        case none
+        case up
+        case down
     }
 
     var body: some View {
@@ -72,6 +85,7 @@ struct GalleryView: View {
                     }
                 } else {
                     // 사진이 있을 때
+                    ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 20, pinnedViews: []) {
                             // 네이티브 광고 1개 - LazyVStack 첫 항목으로 고정
@@ -104,6 +118,18 @@ struct GalleryView: View {
                     .simultaneousGesture(dragSelectionGesture)
                     .onPreferenceChange(PhotoFramePreferenceKey.self) { frames in
                         photoFrames = frames
+                    }
+                    .background(
+                        // 가장자리 자동 스크롤 판정용 뷰포트 크기 추적
+                        GeometryReader { geometry in
+                            Color.clear
+                                .onAppear { scrollViewportSize = geometry.size }
+                                .onChange(of: geometry.size) { _, newSize in
+                                    scrollViewportSize = newSize
+                                }
+                        }
+                    )
+                    .onAppear { scrollProxy = proxy }
                     }
                 }
                 
@@ -289,6 +315,9 @@ struct GalleryView: View {
 
         guard dragSelectionPhase == .selecting, let anchorID = dragAnchorPhotoID else { return }
 
+        lastDragLocation = value.location
+        updateAutoScroll(for: value.location)
+
         // 손가락이 셀 사이 틈이나 광고 위에 있으면 마지막으로 지나간 셀 기준 유지
         guard let currentID = photoID(at: value.location) ?? lastDragPhotoID else { return }
         if currentID != lastDragPhotoID {
@@ -299,11 +328,83 @@ struct GalleryView: View {
     }
 
     private func resetDragSelection() {
+        stopAutoScroll()
         dragSelectionPhase = .idle
         isDragSelecting = false
         dragAnchorPhotoID = nil
         lastDragPhotoID = nil
+        lastDragLocation = nil
         preDragSelection = []
+    }
+
+    // MARK: 가장자리 자동 스크롤
+
+    private func updateAutoScroll(for location: CGPoint) {
+        let edgeZone: CGFloat = 100
+        let viewportHeight = scrollViewportSize.height
+
+        if viewportHeight > 0, location.y > viewportHeight - edgeZone {
+            autoScrollDirection = .down
+        } else if location.y < edgeZone {
+            autoScrollDirection = .up
+        } else {
+            autoScrollDirection = .none
+        }
+
+        if autoScrollDirection == .none {
+            stopAutoScroll()
+        } else if autoScrollTask == nil {
+            startAutoScroll()
+        }
+    }
+
+    private func startAutoScroll() {
+        autoScrollTask = Task { @MainActor in
+            while !Task.isCancelled && dragSelectionPhase == .selecting {
+                performAutoScrollStep()
+                try? await Task.sleep(for: .milliseconds(160))
+            }
+        }
+    }
+
+    private func stopAutoScroll() {
+        autoScrollTask?.cancel()
+        autoScrollTask = nil
+        autoScrollDirection = .none
+    }
+
+    /// 한 줄(3칸)씩 스크롤하면서, 새로 드러난 셀을 멈춰 있는 손가락 위치 기준으로 선택에 반영
+    private func performAutoScrollStep() {
+        guard dragSelectionPhase == .selecting,
+              autoScrollDirection != .none,
+              let proxy = scrollProxy,
+              let anchorID = dragAnchorPhotoID else { return }
+
+        if let location = lastDragLocation,
+           let idUnderFinger = photoID(at: location) {
+            if idUnderFinger != lastDragPhotoID {
+                lastDragPhotoID = idUnderFinger
+                UISelectionFeedbackGenerator().selectionChanged()
+            }
+            applyDragSelection(from: anchorID, to: idUnderFinger)
+        }
+
+        guard let referenceID = lastDragPhotoID else { return }
+        let orderedIDs = orderedPhotoIDs
+        guard let referenceIndex = orderedIDs.firstIndex(of: referenceID) else { return }
+
+        let rowStep = 3  // 3열 그리드 한 줄
+        let targetIndex = autoScrollDirection == .down
+            ? min(referenceIndex + rowStep, orderedIDs.count - 1)
+            : max(referenceIndex - rowStep, 0)
+        guard targetIndex != referenceIndex else { return }
+
+        withAnimation(.linear(duration: 0.15)) {
+            proxy.scrollTo(
+                orderedIDs[targetIndex],
+                anchor: autoScrollDirection == .down ? .bottom : .top
+            )
+        }
     }
 
     /// 현재 보이는 셀 프레임에서 좌표에 해당하는 사진 ID 찾기
@@ -311,9 +412,14 @@ struct GalleryView: View {
         photoFrames.first(where: { $0.value.contains(point) })?.key
     }
 
+    /// 화면 표시 순서로 펼친 사진 ID 목록
+    private var orderedPhotoIDs: [String] {
+        sortedDateKeys.flatMap { groupedPhotos[$0]?.map(\.id) ?? [] }
+    }
+
     /// 앵커~현재 셀 구간을 일괄 선택/해제 (드래그를 되돌리면 시작 시점 상태로 복원)
     private func applyDragSelection(from anchorID: String, to currentID: String) {
-        let orderedIDs = sortedDateKeys.flatMap { groupedPhotos[$0]?.map(\.id) ?? [] }
+        let orderedIDs = orderedPhotoIDs
         guard let anchorIndex = orderedIDs.firstIndex(of: anchorID),
               let currentIndex = orderedIDs.firstIndex(of: currentID) else { return }
 
@@ -417,6 +523,7 @@ struct SelectablePhotoGrid: View {
                 .onTapGesture {
                     handlePhotoTap(photo)
                 }
+                .id(photo.id)  // 가장자리 자동 스크롤(scrollTo) 타깃
             }
         }
     }
