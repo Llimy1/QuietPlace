@@ -19,7 +19,26 @@ struct GalleryView: View {
     @State private var showDownloadAlert = false
     @State private var downloadMessage = ""
     @State private var hasInitialized = false
-    
+
+    // 드래그 선택 상태 (애플 사진앱 스타일: 가로 시작 = 선택, 세로 시작 = 스크롤)
+    @State private var photoFrames: [String: CGRect] = [:]
+    @State private var isDragSelecting = false
+    @State private var dragSelectionPhase: DragSelectionPhase = .idle
+    @State private var dragAnchorPhotoID: String?
+    @State private var lastDragPhotoID: String?
+    @State private var dragShouldSelect = true
+    @State private var preDragSelection: Set<String> = []
+
+    /// 셀 프레임과 드래그 좌표를 같은 기준으로 맞추기 위한 좌표공간 이름
+    static let dragSelectionSpace = "gallerySelectionSpace"
+
+    /// 드래그 시작 방향에 따라 선택/스크롤 중 하나로 잠금
+    private enum DragSelectionPhase {
+        case idle        // 방향 미정
+        case selecting   // 가로 시작 → 드래그 선택
+        case scrolling   // 세로 시작 → 스크롤에 양보
+    }
+
     var body: some View {
         ZStack {
             Color.black
@@ -79,6 +98,12 @@ struct GalleryView: View {
                         }
                         .padding(.top, 20)
                         .padding(.bottom, 80)
+                    }
+                    .coordinateSpace(name: Self.dragSelectionSpace)
+                    .scrollDisabled(isDragSelecting)
+                    .simultaneousGesture(dragSelectionGesture)
+                    .onPreferenceChange(PhotoFramePreferenceKey.self) { frames in
+                        photoFrames = frames
                     }
                 }
                 
@@ -176,6 +201,11 @@ struct GalleryView: View {
                     }
                 }
             }
+            .onChange(of: isSelectionMode) { _, isOn in
+                if !isOn {
+                    resetDragSelection()
+                }
+            }
             .overlay {
                 if isDownloading {
                     ZStack {
@@ -228,8 +258,78 @@ struct GalleryView: View {
         return Self.sectionDateFormatter.string(from: date)
     }
     
+    // MARK: - Drag Selection (애플 사진앱 스타일)
+
+    private var dragSelectionGesture: some Gesture {
+        // minimumDistance로 탭과 구분: 12pt 미만 이동은 탭으로 처리됨
+        DragGesture(minimumDistance: 12, coordinateSpace: .named(Self.dragSelectionSpace))
+            .onChanged(handleDragChanged)
+            .onEnded { _ in
+                resetDragSelection()
+            }
+    }
+
+    private func handleDragChanged(_ value: DragGesture.Value) {
+        guard isSelectionMode else { return }
+
+        if dragSelectionPhase == .idle {
+            // 시작 방향으로 잠금: 가로 = 선택 드래그, 세로 = 스크롤에 양보
+            let isHorizontal = abs(value.translation.width) > abs(value.translation.height)
+            if isHorizontal, let anchorID = photoID(at: value.startLocation) {
+                dragSelectionPhase = .selecting
+                isDragSelecting = true  // 선택 드래그 동안만 스크롤 잠금
+                dragAnchorPhotoID = anchorID
+                dragShouldSelect = !selectedPhotos.contains(anchorID)
+                preDragSelection = selectedPhotos
+            } else {
+                dragSelectionPhase = .scrolling
+                return
+            }
+        }
+
+        guard dragSelectionPhase == .selecting, let anchorID = dragAnchorPhotoID else { return }
+
+        // 손가락이 셀 사이 틈이나 광고 위에 있으면 마지막으로 지나간 셀 기준 유지
+        guard let currentID = photoID(at: value.location) ?? lastDragPhotoID else { return }
+        if currentID != lastDragPhotoID {
+            lastDragPhotoID = currentID
+            UISelectionFeedbackGenerator().selectionChanged()
+        }
+        applyDragSelection(from: anchorID, to: currentID)
+    }
+
+    private func resetDragSelection() {
+        dragSelectionPhase = .idle
+        isDragSelecting = false
+        dragAnchorPhotoID = nil
+        lastDragPhotoID = nil
+        preDragSelection = []
+    }
+
+    /// 현재 보이는 셀 프레임에서 좌표에 해당하는 사진 ID 찾기
+    private func photoID(at point: CGPoint) -> String? {
+        photoFrames.first(where: { $0.value.contains(point) })?.key
+    }
+
+    /// 앵커~현재 셀 구간을 일괄 선택/해제 (드래그를 되돌리면 시작 시점 상태로 복원)
+    private func applyDragSelection(from anchorID: String, to currentID: String) {
+        let orderedIDs = sortedDateKeys.flatMap { groupedPhotos[$0]?.map(\.id) ?? [] }
+        guard let anchorIndex = orderedIDs.firstIndex(of: anchorID),
+              let currentIndex = orderedIDs.firstIndex(of: currentID) else { return }
+
+        var newSelection = preDragSelection
+        for id in orderedIDs[min(anchorIndex, currentIndex)...max(anchorIndex, currentIndex)] {
+            if dragShouldSelect {
+                newSelection.insert(id)
+            } else {
+                newSelection.remove(id)
+            }
+        }
+        selectedPhotos = newSelection
+    }
+
     // MARK: - Actions
-    
+
     private func deleteSelectedPhotos() {
         let photosToDelete = photoDataManager.photos.filter { selectedPhotos.contains($0.id) }
         
@@ -273,6 +373,15 @@ struct GalleryView: View {
     }
 }
 
+/// 드래그 선택 히트테스트용으로 화면에 보이는 셀들의 프레임을 수집
+struct PhotoFramePreferenceKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
 struct SelectablePhotoGrid: View {
     let photos: [PhotoItem]
     @Binding var isSelectionMode: Bool
@@ -293,6 +402,18 @@ struct SelectablePhotoGrid: View {
                     isSelected: selectedPhotos.contains(photo.id),
                     isSelectionMode: isSelectionMode
                 )
+                .overlay {
+                    // 선택 모드에서만 셀 프레임 보고 (드래그 선택 히트테스트용)
+                    if isSelectionMode {
+                        GeometryReader { geometry in
+                            Color.clear
+                                .preference(
+                                    key: PhotoFramePreferenceKey.self,
+                                    value: [photo.id: geometry.frame(in: .named(GalleryView.dragSelectionSpace))]
+                                )
+                        }
+                    }
+                }
                 .onTapGesture {
                     handlePhotoTap(photo)
                 }
